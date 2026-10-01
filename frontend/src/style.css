@@ -1358,3 +1358,6 @@ textarea {
 .agent-activity-details { padding-top: 8px; }
 .agent-tool summary b { font-weight: 400; opacity: .7; font-size: 10px; }
 .agent-working { font-size: 12px; opacity: .6; padding: 8px 0; }
+.agent-directory-picker { display: flex; flex-wrap: wrap; gap: 8px; }
+.agent-directory-picker input { flex: 1; min-width: 160px; }
+.agent-directory-picker button { flex-shrink: 0; }

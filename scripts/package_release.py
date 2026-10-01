@@ -46,7 +46,7 @@ with tarfile.open(archive, 'w:gz') as tar:
     tar.add(binary, arcname='free-router', recursive=False)
     tar.add(root / 'frontend/dist', arcname='frontend/dist')
     tar.add(root / 'README.md', arcname='README.md')
-    for name in ['server.mjs', 'tool-events.mjs', 'package.json', 'package-lock.json', 'node_modules']:
+    for name in ['server.mjs', 'tool-events.mjs', 'web-search.mjs', 'package.json', 'package-lock.json', 'node_modules']:
         tar.add(root / 'agent' / name, arcname=f'agent/{name}', filter=agent_filter)
     note = f'Free Router {version}\nRun ./free-router from this directory.\nPi Agent coding tools require Node.js 22.19+ on PATH (or set PI_NODE_BIN). Agent dependencies are included.\nWhen updating, stop the old process and copy settings.local.json, gateway-key.local.txt, update-settings.local.json and .env into this directory before starting.\n'.encode()
     info = tarfile.TarInfo('INSTALL.txt')

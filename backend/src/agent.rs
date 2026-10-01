@@ -23,6 +23,7 @@ pub struct Bridge {
     gateway_url: String,
     token: String,
     running: Mutex<Option<Running>>,
+    folder_picker: Mutex<()>,
     client: reqwest::Client,
 }
 impl Bridge {
@@ -45,6 +46,7 @@ impl Bridge {
             gateway_url,
             token: bytes.iter().map(|b| format!("{b:02x}")).collect(),
             running: Mutex::new(None),
+            folder_picker: Mutex::new(()),
             client: reqwest::Client::builder()
                 .no_proxy()
                 .timeout(Duration::from_secs(45))
@@ -87,6 +89,10 @@ impl Bridge {
             .env("PI_BRIDGE_TOKEN", &self.token)
             .env("PI_GATEWAY_URL", &self.gateway_url)
             .env("PI_DEFAULT_CWD", cwd)
+            .env(
+                "PI_EXA_BASE_URL",
+                std::env::var("EXA_BASE_URL").unwrap_or_else(|_| "https://api.exa.ai".into()),
+            )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -146,6 +152,21 @@ pub async fn proxy(
     let Some(path) = uri.path().strip_prefix("/api/agent/") else {
         return error(StatusCode::NOT_FOUND, "Unknown Agent route");
     };
+    if path == "pick-directory" {
+        if method != Method::POST {
+            return error(
+                StatusCode::METHOD_NOT_ALLOWED,
+                "Use POST to choose a folder",
+            );
+        }
+        if !peer.ip().is_loopback() {
+            return error(StatusCode::FORBIDDEN, "请在本机打开网关以选择系统文件夹");
+        }
+        let Ok(_guard) = app.agent.folder_picker.try_lock() else {
+            return error(StatusCode::CONFLICT, "文件夹选择窗口已经打开");
+        };
+        return choose_directory(&body, &app.agent.root).await;
+    }
     let parts: Vec<_> = path.split('/').collect();
     let valid = matches!(path, "status" | "sessions")
         || (parts.first() == Some(&"sessions")
@@ -176,6 +197,7 @@ pub async fn proxy(
         .request(method, format!("http://127.0.0.1:{port}/{path}"))
         .bearer_auth(&app.agent.token)
         .header("x-pi-gateway-key", key)
+        .header("x-pi-exa-key", app.exa_key.read().await.as_str())
         .header("content-type", "application/json")
         .body(body)
         .send()
@@ -201,5 +223,63 @@ pub async fn proxy(
         )
             .into_response(),
         Err(_) => error(StatusCode::BAD_GATEWAY, "Cannot read Pi Agent response"),
+    }
+}
+
+async fn choose_directory(body: &[u8], root: &std::path::Path) -> Response {
+    if !cfg!(target_os = "macos") {
+        return error(
+            StatusCode::NOT_IMPLEMENTED,
+            "系统 Finder 选择目录仅支持 macOS，请手动输入路径",
+        );
+    }
+    let initial = serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|value| value["cwd"].as_str().map(PathBuf::from))
+        .filter(|path| path.is_absolute() && path.is_dir())
+        .unwrap_or_else(|| root.to_path_buf());
+    // Pass the directory as argv, never interpolate user paths into AppleScript.
+    let script = r#"on run argv
+      try
+        tell application "Finder"
+          activate
+          set chosen to choose folder with prompt "选择 Pi Agent 工作目录" default location (POSIX file (item 1 of argv))
+        end tell
+        return POSIX path of chosen
+      on error number -128
+        return ""
+      end try
+    end run"#;
+    let result = tokio::time::timeout(
+        Duration::from_secs(300),
+        Command::new("/usr/bin/osascript")
+            .arg("-e")
+            .arg(script)
+            .arg(initial)
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await;
+    match result {
+        Ok(Ok(output)) if output.status.success() => {
+            let path = String::from_utf8_lossy(&output.stdout);
+            let path = path.strip_suffix('\n').unwrap_or(&path);
+            if path.is_empty() {
+                return axum::Json(serde_json::json!({ "cwd": null, "cancelled": true }))
+                    .into_response();
+            }
+            match tokio::fs::canonicalize(path).await {
+                Ok(path) if path.is_dir() => {
+                    axum::Json(serde_json::json!({ "cwd": path, "cancelled": false }))
+                        .into_response()
+                }
+                _ => error(StatusCode::BAD_REQUEST, "所选文件夹不存在或无法访问"),
+            }
+        }
+        Err(_) => error(StatusCode::REQUEST_TIMEOUT, "文件夹选择已超时，请重试"),
+        _ => error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "无法打开 Finder 文件夹选择窗口，请检查系统自动化权限或手动输入路径",
+        ),
     }
 }

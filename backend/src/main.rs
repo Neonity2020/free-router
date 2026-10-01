@@ -66,6 +66,7 @@ struct App {
     client: reqwest::Client,
     updater: Arc<updates::Updater>,
     providers: RwLock<Vec<Provider>>,
+    exa_key: RwLock<String>,
     settings_file: PathBuf,
     token: String,
     gateway_key: RwLock<String>,
@@ -180,7 +181,7 @@ async fn generate_gateway_key(State(app): State<Shared>, headers: HeaderMap) -> 
 async fn status(State(app): State<Shared>) -> Json<Value> {
     let providers = app.providers.read().await;
     Json(
-        json!({"service":"Free Router","auth_required":!app.token.is_empty() || !app.gateway_key.read().await.is_empty(),"management_auth_required":!app.token.is_empty(),"requests":app.requests.load(Ordering::Relaxed),"fallbacks":app.fallbacks.load(Ordering::Relaxed),"key_retries":app.key_retries.load(Ordering::Relaxed),"default_provider":providers[0].id,"providers":providers.iter().map(|p|json!({"id":p.id,"model":p.model,"configured":!p.keys.is_empty(),"key_count":p.keys.len(),"keys":p.keys.iter().enumerate().map(|(i,k)|json!({"id":k.id,"label":format!("Key {}",i+1)})).collect::<Vec<_>>()})).collect::<Vec<_>>()}),
+        json!({"service":"Free Router","exa_configured":!app.exa_key.read().await.is_empty(),"auth_required":!app.token.is_empty() || !app.gateway_key.read().await.is_empty(),"management_auth_required":!app.token.is_empty(),"requests":app.requests.load(Ordering::Relaxed),"fallbacks":app.fallbacks.load(Ordering::Relaxed),"key_retries":app.key_retries.load(Ordering::Relaxed),"default_provider":providers[0].id,"providers":providers.iter().map(|p|json!({"id":p.id,"model":p.model,"configured":!p.keys.is_empty(),"key_count":p.keys.len(),"keys":p.keys.iter().enumerate().map(|(i,k)|json!({"id":k.id,"label":format!("Key {}",i+1)})).collect::<Vec<_>>()})).collect::<Vec<_>>()}),
     )
 }
 // A custom header blocks cross-origin form submissions; gateway auth still applies.
@@ -204,8 +205,27 @@ async fn save_settings(
     };
     let mut providers = app.providers.write().await;
     let mut next = providers.clone();
+    let mut exa_key = app.exa_key.write().await;
+    let mut next_exa = exa_key.clone();
     for (name, value) in fields {
         match name.as_str() {
+            "exa" => {
+                if value.is_null() {
+                    next_exa.clear();
+                } else {
+                    match parse_keys(value) {
+                        Ok(keys) if keys.len() == 1 && value.is_string() => {
+                            next_exa = keys[0].secret.clone()
+                        }
+                        _ => {
+                            return error(
+                                StatusCode::BAD_REQUEST,
+                                "Exa API key must be a non-empty ASCII string, or null to clear",
+                            )
+                        }
+                    }
+                }
+            }
             "openrouter" | "opencode" => {
                 let p = next.iter_mut().find(|p| p.id == name).unwrap();
                 let keys = if let Some(patch) = value.as_object() {
@@ -276,6 +296,7 @@ async fn save_settings(
         next.sort_by_key(|p| p.id != preferred);
     }
     let mut saved = json!({"default_provider":next[0].id});
+    saved["exa"] = json!(next_exa);
     for p in &next {
         saved[p.id] = json!(p.keys.iter().map(|k| &k.secret).collect::<Vec<_>>());
     }
@@ -305,6 +326,7 @@ async fn save_settings(
         );
     }
     *providers = next;
+    *exa_key = next_exa;
     Json(json!({"saved":true})).into_response()
 }
 async fn models(State(app): State<Shared>, headers: HeaderMap) -> Response {
@@ -446,11 +468,15 @@ async fn main() {
     let settings_file = env::var("SETTINGS_FILE")
         .map(PathBuf::from)
         .unwrap_or_else(|_| root.join("settings.local.json"));
+    let mut exa_key = var("EXA_API_KEY", "");
     if settings_file.exists() {
         let saved: Value = serde_json::from_slice(
             &std::fs::read(&settings_file).expect("Cannot read local settings"),
         )
         .expect("Invalid local settings JSON");
+        if let Some(value) = saved.get("exa") {
+            exa_key = value.as_str().unwrap_or("").to_owned();
+        }
         for p in &mut providers {
             if let Some(value) = saved.get(p.id) {
                 p.keys = parse_keys(value).expect("Invalid saved API key pool");
@@ -494,6 +520,7 @@ async fn main() {
             .build()
             .unwrap(),
         providers: RwLock::new(providers),
+        exa_key: RwLock::new(exa_key),
         settings_file,
         token: var("GATEWAY_API_KEY", ""),
         requests: AtomicU64::new(0),

@@ -1,5 +1,6 @@
 import { createServer } from 'node:http';
 import { recordToolEvent } from './tool-events.mjs';
+import { createWebSearchTool } from './web-search.mjs';
 import { randomUUID } from 'node:crypto';
 import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
@@ -46,7 +47,7 @@ function observe(state, event) {
   }
   recordToolEvent(state, event, addItem, limitText, toolText);
 }
-async function createSession(body, key) {
+async function createSession(body, key, exaKey) {
   if (sessions.size >= 12) throw Object.assign(new Error('最多保留 12 个会话，请先删除旧会话'), { code: 409 });
   if (!models.includes(body.model)) throw new Error('未知网关模型');
   if (typeof body.cwd !== 'string' || !isAbsolute(body.cwd)) throw new Error('请输入绝对工作目录');
@@ -76,13 +77,15 @@ async function createSession(body, key) {
     appendSystemPrompt: ['你是 Free Router 中的 Pi 编程助手。使用工具完成用户的编程任务，并以用户的语言回答。工作目录不是安全沙箱；只操作用户任务需要的文件。'],
   });
   await resourceLoader.reload();
+  const searchConfig = { key: exaKey || '', baseUrl: process.env.PI_EXA_BASE_URL || 'https://api.exa.ai' };
   const { session } = await createAgentSession({ cwd, agentDir: cwd, modelRuntime: runtime,
     model: runtime.getModel('free-router', body.model), thinkingLevel: 'off', resourceLoader,
-    tools: ['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls'], settingsManager,
+    tools: ['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls', 'web_search'], settingsManager,
+    customTools: [createWebSearchTool(() => searchConfig)],
     sessionManager: SessionManager.inMemory(cwd),
   });
   const state = { id: randomUUID(), cwd, model: body.model, busy: false, title: '新会话',
-    items: [], toolItems: new Map(), assistant: null, session, runtime };
+    items: [], toolItems: new Map(), assistant: null, session, runtime, searchConfig };
   session.subscribe(event => observe(state, event));
   sessions.set(state.id, state);
   return snapshot(state);
@@ -106,7 +109,7 @@ const server = createServer(async (req, res) => {
     const key = req.headers['x-pi-gateway-key'];
     if (req.method === 'GET' && path === '/status') return respond(200, { version: '0.99.2', default_cwd: defaultCwd, models });
     if (req.method === 'GET' && path === '/sessions') return respond(200, { sessions: [...sessions.values()].map(s => ({ id: s.id, cwd: s.cwd, model: s.model, busy: s.busy, title: s.title })) });
-    if (req.method === 'POST' && path === '/sessions') return respond(201, await createSession(await bodyOf(req), key));
+    if (req.method === 'POST' && path === '/sessions') return respond(201, await createSession(await bodyOf(req), key, req.headers['x-pi-exa-key']));
     const match = /^\/sessions\/([\w-]+)(?:\/(prompt|abort))?$/.exec(path);
     const state = match && sessions.get(match[1]);
     if (!state) return respond(404, { error: { message: '会话不存在，请新建会话' } });
@@ -126,6 +129,7 @@ const server = createServer(async (req, res) => {
       if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 100000) throw new Error('请输入消息（最多 100000 字符）');
       if ([...sessions.values()].some(s => s.busy)) return respond(409, { error: { message: '另一个任务正在运行，请等待或停止' } });
       state.busy = true;
+      state.searchConfig.key = req.headers['x-pi-exa-key'] || '';
       try { await state.runtime.setRuntimeApiKey('free-router', key); }
       catch (error) { state.busy = false; throw error; }
       if (state.title === '新会话') state.title = prompt.slice(0, 36);

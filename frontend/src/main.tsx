@@ -20,6 +20,7 @@ import PiAgent from "./PiAgent";
 import MarkdownMessage from "./MarkdownMessage";
 import { PI_SDK_VERSION, gatewayPiSnippet, streamGatewayReply } from "./piGateway";
 type Status = {
+  exa_configured: boolean;
   auth_required: boolean;
   management_auth_required: boolean;
   default_provider: string;
@@ -50,6 +51,8 @@ function App() {
   const [preferred, setPreferred] = useState("");
   const [saving, setSaving] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState("");
+  const [exaKey, setExaKey] = useState("");
+  const [clearExa, setClearExa] = useState(false);
   const [gatewayKey, setGatewayKey] = useState("");
   const [keyBusy, setKeyBusy] = useState(false);
   const [keyMessage, setKeyMessage] = useState("");
@@ -112,6 +115,8 @@ function App() {
       }
     }
     if (preferred) updates.default_provider = preferred;
+    if (clearExa) updates.exa = null;
+    else if (exaKey.trim()) updates.exa = exaKey.trim();
     try {
       const response = await fetch("/api/settings", {
         method: "POST",
@@ -128,6 +133,7 @@ function App() {
       setRemovedKeys({});
       setClearKeys({});
       setPreferred("");
+      setExaKey(""); setClearExa(false);
       setSettingsMessage("设置已保存，立即生效。重启后仍然保留。");
       await refresh();
     } catch (e) {
@@ -696,6 +702,13 @@ function App() {
                     </div>
                   );
                 })}
+                <div className="settings-provider">
+                  <div className="provider-status"><b>Exa Web Search</b><span className={status?.exa_configured ? "ready" : ""}>{status?.exa_configured ? "已配置" : "未配置密钥"}</span></div>
+                  <a className="get-api-key" href="https://dashboard.exa.ai/api-keys" target="_blank" rel="noopener noreferrer">获取 Exa API Key <ArrowUpRight size={14} /></a>
+                  <p>供 Pi Agent 的 web_search 工具搜索网页，返回标题、链接与内容摘要。</p>
+                  <label>Exa API Key<input type="password" autoComplete="new-password" value={exaKey} disabled={saving || clearExa} onChange={e => setExaKey(e.target.value)} placeholder="粘贴 API Key；留空保留原密钥" /></label>
+                  {status?.exa_configured && <label className="clear-key"><input type="checkbox" disabled={saving} checked={clearExa} onChange={e => setClearExa(e.target.checked)} /> 清除 Exa 密钥</label>}
+                </div>
                 <label>
                   自动路由优先上游
                   <select

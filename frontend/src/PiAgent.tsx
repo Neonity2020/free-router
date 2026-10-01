@@ -19,6 +19,7 @@ export default function PiAgent({ managementRequired, gatewayKey, onKeyChange }:
   const [error, setError] = useState("");
   const [ready, setReady] = useState(false);
   const [pending, setPending] = useState(false);
+  const [choosingDirectory, setChoosingDirectory] = useState(false);
   const [loading, setLoading] = useState(true);
   const [reload, setReload] = useState(0);
   const transcript = useRef<HTMLDivElement>(null);
@@ -94,6 +95,14 @@ export default function PiAgent({ managementRequired, gatewayKey, onKeyChange }:
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setPending(false); }
   }
+  async function chooseDirectory() {
+    setChoosingDirectory(true); setError("");
+    try {
+      const data = await request("pick-directory", "POST", { cwd: cwd.trim() });
+      if (!data.cancelled && typeof data.cwd === "string") setCwd(data.cwd);
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setChoosingDirectory(false); }
+  }
   async function send() {
     if (!session || !prompt.trim() || session.busy || pending) return;
     setPending(true); setError("");
@@ -130,7 +139,12 @@ export default function PiAgent({ managementRequired, gatewayKey, onKeyChange }:
           <input type="password" autoComplete="off" value={gatewayKey} onChange={e => onKeyChange(e.target.value)} placeholder="GATEWAY_API_KEY" />
         </label>}
         <label>工作目录（绝对路径）
-          <input value={cwd} onChange={e => setCwd(e.target.value)} placeholder="/Users/you/projects/my-app" />
+          <div className="agent-directory-picker">
+            <input value={cwd} onChange={e => setCwd(e.target.value)} disabled={choosingDirectory} placeholder="/Users/you/projects/my-app" />
+            <button type="button" className="secondary" disabled={choosingDirectory || (managementRequired && !gatewayKey)} onClick={chooseDirectory}>
+              <FolderOpen size={16} />{choosingDirectory ? "选择中…" : "Finder 选择"}
+            </button>
+          </div>
         </label>
         <label>模型路由
           <select value={model} onChange={e => setModel(e.target.value)}>
@@ -138,7 +152,7 @@ export default function PiAgent({ managementRequired, gatewayKey, onKeyChange }:
           </select>
         </label>
         <p className="agent-permissions">工具以本机用户权限读写文件、执行命令。工作目录不是沙箱；新建会话后即可执行编程任务。</p>
-        <button className="primary" onClick={create} disabled={!ready || !cwd.trim() || pending || busy}>
+        <button className="primary" onClick={create} disabled={!ready || !cwd.trim() || pending || busy || choosingDirectory}>
           <Plus size={16} /> {loading ? "连接 Agent…" : "新建编程会话"}
         </button>
         {!ready && !loading && <button className="secondary" onClick={() => setReload(value => value + 1)}>重试连接</button>}
@@ -164,7 +178,7 @@ export default function PiAgent({ managementRequired, gatewayKey, onKeyChange }:
         }} aria-label="Agent 对话与工具执行">
           {!session?.items.length && <div className="agent-empty"><Terminal size={30} />
             <h3>从代码到可运行的结果</h3><p>例如：阅读当前项目，修复登录失败的问题并运行相关测试。</p>
-            <div>read · write · edit · bash · grep · find · ls</div>
+            <div>read · write · edit · bash · grep · find · ls · web_search</div>
           </div>}
           {buildTimeline(session?.items || []).map(entry => {
             if (entry.kind === "tools") return <ToolActivity key={`${activeId}:${entry.id}`} items={entry.items} />;

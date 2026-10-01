@@ -14,6 +14,14 @@ test('Web API executes the official Pi coding tools through the Rust gateway', a
   const mock = createServer(async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
+    if (req.url === '/search') {
+      assert.equal(req.headers['x-api-key'], 'mock-exa-key');
+      const search = JSON.parse(raw);
+      assert.equal(search.query, 'Pi Agent documentation');
+      assert.equal(search.type, 'auto');
+      res.writeHead(200, { 'content-type': 'application/json' });
+      return res.end(JSON.stringify({ results: [{ title: 'Pi Docs', url: 'https://pi.dev/docs', highlights: ['SDK documentation'] }] }));
+    }
     const body = JSON.parse(raw); requests.push(body);
     assert.equal(req.headers.authorization, 'Bearer mock-upstream');
     assert.equal(body.model, 'stealth/space-bunny-alpha');
@@ -24,6 +32,7 @@ test('Web API executes the official Pi coding tools through the Rust gateway', a
       ['edit', { path: 'hello.js', oldText: 'before', newText: 'after' }],
       ['bash', { command: 'node hello.js' }],
       ['read', { path: 'hello.js' }],
+      ['web_search', { query: 'Pi Agent documentation', num_results: 1 }],
     ];
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     const send = (delta, finish_reason = null) => res.write(`data: ${JSON.stringify({
@@ -48,6 +57,7 @@ test('Web API executes the official Pi coding tools through the Rust gateway', a
       SETTINGS_FILE: resolve(directory, 'settings.json'), GATEWAY_API_KEY: 'mock-management',
       DEFAULT_PROVIDER: 'openrouter', OPENROUTER_API_KEY: 'mock-upstream', OPENCODE_API_KEY: '',
       OPENROUTER_BASE_URL: `http://127.0.0.1:${mock.address().port}/v1`,
+      EXA_BASE_URL: `http://127.0.0.1:${mock.address().port}`, EXA_API_KEY: '',
     },
   });
   let errors = ''; proc.stderr.on('data', chunk => errors += chunk);
@@ -71,13 +81,25 @@ test('Web API executes the official Pi coding tools through the Rust gateway', a
   }
   assert.equal((await api('status', 'GET', undefined, 'wrong')).status, 401);
   assert.equal((await api('status', 'GET', undefined, 'mock-management', false)).status, 403);
+  assert.equal((await api('pick-directory', 'POST', {}, 'wrong')).status, 401);
+  assert.equal((await api('pick-directory', 'POST', {}, 'mock-management', false)).status, 403);
+  assert.equal((await api('pick-directory')).status, 405);
+  const settings = await fetch(`http://127.0.0.1:${port}/api/settings`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Gateway-Settings': '1', Authorization: 'Bearer mock-management' },
+    body: JSON.stringify({ exa: 'mock-exa-key' }),
+  });
+  assert.equal(settings.status, 200);
+  const publicStatus = await (await fetch(`http://127.0.0.1:${port}/api/status`)).json();
+  assert.equal(publicStatus.exa_configured, true);
+  assert.ok(!JSON.stringify(publicStatus).includes('mock-exa-key'));
+  assert.equal(JSON.parse(await readFile(resolve(directory, 'settings.json'), 'utf8')).exa, 'mock-exa-key');
   const status = await api('status'); assert.equal(status.status, 200, JSON.stringify(status.data) + errors);
   assert.equal(status.data.default_cwd, directory);
   assert.equal((await api('sessions', 'POST', { cwd: 'relative', model: 'space-bunny' })).status, 400);
   const created = await api('sessions', 'POST', { cwd: directory, model: 'space-bunny' });
   assert.equal(created.status, 201, JSON.stringify(created.data) + errors);
   const id = created.data.id;
-  assert.deepEqual(created.data.tools.sort(), ['bash', 'edit', 'find', 'grep', 'ls', 'read', 'write']);
+  assert.deepEqual(created.data.tools.sort(), ['bash', 'edit', 'find', 'grep', 'ls', 'read', 'web_search', 'write']);
   assert.equal((await api(`sessions/${id}/prompt`, 'POST', { prompt: 'write and test code' })).status, 202);
   assert.equal((await api(`sessions/${id}/prompt`, 'POST', { prompt: 'overlap' })).status, 409);
   let final;
@@ -91,10 +113,27 @@ test('Web API executes the official Pi coding tools through the Rust gateway', a
   assert.equal(await readFile(resolve(directory, 'hello.js'), 'utf8'), "console.log('after');\n");
   assert.deepEqual(final.items.filter(i => i.type === 'tool').map(i => [i.name, i.status]), [
     ['write', 'done'], ['edit', 'done'], ['bash', 'done'], ['read', 'done'],
+    ['web_search', 'done'],
   ]);
   assert.match(final.items.find(i => i.name === 'bash').text, /after/);
+  assert.match(final.items.find(i => i.name === 'web_search').text, /https:\/\/pi.dev\/docs/);
+  assert.ok(!JSON.stringify(final).includes('mock-exa-key'));
   assert.equal(final.items.at(-1).text, '代码已修改并验证。');
   assert.ok(requests.at(-1).messages.some(m => m.role === 'tool' && String(m.content).includes('after')));
+  async function saveExa(value) {
+    return fetch(`http://127.0.0.1:${port}/api/settings`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Gateway-Settings': '1', Authorization: 'Bearer mock-management' },
+      body: JSON.stringify(value),
+    });
+  }
+  assert.equal((await saveExa({ exa: '' })).status, 400);
+  assert.equal((await saveExa({ default_provider: 'openrouter' })).status, 200);
+  assert.equal(JSON.parse(await readFile(resolve(directory, 'settings.json'), 'utf8')).exa, 'mock-exa-key');
+  assert.equal((await saveExa({ exa: null })).status, 200);
+  assert.equal((await (await fetch(`http://127.0.0.1:${port}/api/status`)).json()).exa_configured, false);
+  const cleared = JSON.parse(await readFile(resolve(directory, 'settings.json'), 'utf8'));
+  assert.equal(cleared.exa, '');
+  assert.deepEqual(cleared.openrouter, ['mock-upstream']);
   const second = (await api('sessions', 'POST', { cwd: directory, model: 'openrouter/space-bunny' })).data;
   await api(`sessions/${second.id}/prompt`, 'POST', { prompt: 'cancel' });
   for (let i = 0; i < 100; i++) {
