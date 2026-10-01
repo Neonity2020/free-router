@@ -2,11 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Bot, FolderOpen, Plus, Send, Square, Terminal, Trash2 } from "lucide-react";
 import { GATEWAY_MODEL_IDS, PI_SDK_VERSION } from "./piGateway";
 import MarkdownMessage from "./MarkdownMessage";
-
-type Item = {
-  id: string; type: "user" | "assistant" | "tool" | "notice";
-  text: string; thinking?: string; name?: string; args?: string; status?: string; error?: boolean;
-};
+import ToolActivity from "./ToolActivity";
+import { buildTimeline, type Item } from "./agentTimeline";
 type SessionSummary = { id: string; cwd: string; model: string; busy: boolean; title: string };
 type Session = SessionSummary & { tools: string[]; items: Item[] };
 
@@ -169,20 +166,19 @@ export default function PiAgent({ managementRequired, gatewayKey, onKeyChange }:
             <h3>从代码到可运行的结果</h3><p>例如：阅读当前项目，修复登录失败的问题并运行相关测试。</p>
             <div>read · write · edit · bash · grep · find · ls</div>
           </div>}
-          {session?.items.map(item => item.type === "tool" ? (
-            <details className={`agent-tool ${item.status}`} key={item.id} open={item.status === "running" || item.status === "error"}>
-              <summary><Terminal size={14} /> {item.name}<span>{item.status === "running" ? "执行中" : item.status === "error" ? "失败" : item.status === "stopped" ? "已停止" : "完成"}</span></summary>
-              <pre>{item.args}</pre>{item.text && <pre>{item.text}</pre>}
-            </details>
-          ) : (
+          {buildTimeline(session?.items || []).map(entry => {
+            if (entry.kind === "tools") return <ToolActivity key={`${activeId}:${entry.id}`} items={entry.items} />;
+            const item = entry.item;
+            return (
             <article className={`agent-message ${item.type}${item.error ? " error" : ""}`} key={item.id}>
               <small>{item.type === "user" ? "你" : item.type === "assistant" ? "PI AGENT" : "运行状态"}</small>
               {item.thinking && <details><summary>思考过程</summary><MarkdownMessage text={item.thinking} /></details>}
               {item.type === "assistant"
-                ? <MarkdownMessage text={item.text || (session.busy ? "正在思考…" : "调用工具")} />
+                ? <MarkdownMessage text={item.text} />
                 : <pre>{item.text}</pre>}
             </article>
-          ))}
+          ); })}
+          {session?.busy && !session.items.some(item => item.status === "running") && <p className="agent-working" role="status">正在思考…</p>}
         </div>
         <form className="agent-composer" onSubmit={e => { e.preventDefault(); send(); }}>
           <label>编程任务<textarea value={prompt} onChange={e => setPrompt(e.target.value)}

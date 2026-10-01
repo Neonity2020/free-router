@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import { recordToolEvent } from './tool-events.mjs';
 import { randomUUID } from 'node:crypto';
 import { realpath, stat } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
@@ -43,19 +44,7 @@ function observe(state, event) {
     state.assistant.thinking = limitText(event.message.content.filter(c => c.type === 'thinking').map(c => c.thinking).join('\n'));
     if (event.message.stopReason === 'error') addItem(state, { type: 'notice', error: true, text: event.message.errorMessage || '模型调用失败' });
   }
-  if (event.type === 'tool_execution_start') {
-    state.toolItems.set(event.toolCallId, addItem(state, { type: 'tool', name: event.toolName,
-      args: limitText(event.args, 8000), text: '', status: 'running' }));
-  }
-  if (event.type === 'tool_execution_update') {
-    const item = state.toolItems.get(event.toolCallId);
-    if (item) item.text = limitText(toolText(event.partialResult));
-  }
-  if (event.type === 'tool_execution_end') {
-    const item = state.toolItems.get(event.toolCallId);
-    if (item) { item.text = limitText(toolText(event.result)); item.status = event.isError ? 'error' : 'done'; }
-    state.toolItems.delete(event.toolCallId);
-  }
+  recordToolEvent(state, event, addItem, limitText, toolText);
 }
 async function createSession(body, key) {
   if (sessions.size >= 12) throw Object.assign(new Error('最多保留 12 个会话，请先删除旧会话'), { code: 409 });

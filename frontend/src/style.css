@@ -1345,3 +1345,16 @@ textarea {
 [data-theme="dark"] .markdown-code-header,
 [data-theme="dark"] .markdown-table th { background: #2b3724; color: #b5c5a9; }
 [data-theme="dark"] .markdown-body .markdown-code pre { background: #182015; color: #dce5d4; }
+
+.agent-activity { margin: 8px 0 16px; border-left: 2px solid var(--border, #dce3d5); padding-left: 10px; }
+.agent-activity-toggle { display: flex; width: 100%; align-items: center; gap: 8px; border: 0; background: transparent; color: inherit; padding: 9px 0; text-align: left; cursor: pointer; }
+.agent-activity-toggle > span { flex: 1; font-size: 12px; overflow-wrap: anywhere; }
+.agent-activity-toggle > small { font-size: 11px; white-space: nowrap; opacity: .7; }
+.agent-activity-toggle svg { flex-shrink: 0; }
+.agent-activity-toggle .expanded { transform: rotate(90deg); }
+.agent-activity.running { border-left-color: #8ca867; }
+.agent-activity.error { border-left-color: #bf5e50; }
+.agent-activity.error .agent-activity-toggle > small { color: #bf5e50; opacity: 1; }
+.agent-activity-details { padding-top: 8px; }
+.agent-tool summary b { font-weight: 400; opacity: .7; font-size: 10px; }
+.agent-working { font-size: 12px; opacity: .6; padding: 8px 0; }
