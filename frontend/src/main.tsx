@@ -155,6 +155,7 @@ function App() {
       })
       .then((s) => {
         setStatus(s);
+        if (window.freeRouterDesktop) setStatus({ ...s, management_auth_required: false });
         setOffline(false);
       })
       .catch(() => setOffline(true));
@@ -741,7 +742,9 @@ function App() {
                   </p>
                 )}
               </section>
-              <UpdateSettings gatewayKey={key} />
+              {window.freeRouterDesktop
+                ? <section className="panel"><h3>桌面应用更新</h3><p>下载并安装新版本桌面安装包。配置保存在应用数据目录，升级后保留。</p><a className="get-api-key" href="https://github.com/Neonity2020/free-router/releases" target="_blank" rel="noopener noreferrer">GitHub Releases <ArrowUpRight size={14} /></a></section>
+                : <UpdateSettings gatewayKey={key} />}
             </>
           )}
           {tab !== "agent" && <section className="integration">

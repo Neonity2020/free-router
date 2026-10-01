@@ -17,3 +17,6 @@ gateway-key.local.tmp
 
 *.tsbuildinfo
 __pycache__/
+node_modules/
+desktop/runtime/
+desktop/dist/

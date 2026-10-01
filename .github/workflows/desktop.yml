@@ -1,0 +1,31 @@
+name: Desktop Build
+on:
+  workflow_dispatch:
+jobs:
+  macos:
+    strategy:
+      matrix:
+        os: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            frontend/package-lock.json
+            agent/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - run: npm ci
+      - run: npm ci --prefix frontend
+      - run: npm ci --prefix agent
+      - run: npm run desktop:test
+      - run: cargo test --locked --manifest-path backend/Cargo.toml
+      - run: npm run desktop:build
+      - run: npx electron-builder --config desktop/electron-builder.cjs --mac zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: free-router-desktop-${{ matrix.os }}
+          path: desktop/dist/*.zip

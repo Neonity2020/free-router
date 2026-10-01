@@ -1,0 +1,20 @@
+{
+  "name": "free-router-desktop",
+  "productName": "Free Router",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local model gateway and Pi coding agent",
+  "author": "Neonity2020",
+  "main": "desktop/main.cjs",
+  "scripts": {
+    "desktop:dev": "npm run build --prefix frontend && cargo build --locked --manifest-path backend/Cargo.toml && electron .",
+    "desktop:build": "npm run build --prefix frontend && cargo build --locked --release --manifest-path backend/Cargo.toml && node desktop/prepare.cjs",
+    "desktop:pack": "npm run desktop:build && electron-builder --config desktop/electron-builder.cjs --dir",
+    "desktop:dist": "npm run desktop:build && electron-builder --config desktop/electron-builder.cjs",
+    "desktop:test": "node --test desktop/tests/*.test.cjs"
+  },
+  "devDependencies": {
+    "electron": "44.5.1",
+    "electron-builder": "26.15.3"
+  }
+}

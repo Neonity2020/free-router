@@ -85,6 +85,9 @@ impl Bridge {
                 command.env(name, value);
             }
         }
+        if std::env::var("PI_NODE_RUN_AS_NODE").as_deref() == Ok("1") {
+            command.env("ELECTRON_RUN_AS_NODE", "1");
+        }
         let mut child = command
             .env("PI_BRIDGE_TOKEN", &self.token)
             .env("PI_GATEWAY_URL", &self.gateway_url)

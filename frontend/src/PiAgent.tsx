@@ -98,7 +98,9 @@ export default function PiAgent({ managementRequired, gatewayKey, onKeyChange }:
   async function chooseDirectory() {
     setChoosingDirectory(true); setError("");
     try {
-      const data = await request("pick-directory", "POST", { cwd: cwd.trim() });
+      const data = window.freeRouterDesktop
+        ? await window.freeRouterDesktop.chooseDirectory(cwd.trim())
+        : await request("pick-directory", "POST", { cwd: cwd.trim() });
       if (!data.cancelled && typeof data.cwd === "string") setCwd(data.cwd);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setChoosingDirectory(false); }
@@ -142,7 +144,7 @@ export default function PiAgent({ managementRequired, gatewayKey, onKeyChange }:
           <div className="agent-directory-picker">
             <input value={cwd} onChange={e => setCwd(e.target.value)} disabled={choosingDirectory} placeholder="/Users/you/projects/my-app" />
             <button type="button" className="secondary" disabled={choosingDirectory || (managementRequired && !gatewayKey)} onClick={chooseDirectory}>
-              <FolderOpen size={16} />{choosingDirectory ? "选择中…" : "Finder 选择"}
+              <FolderOpen size={16} />{choosingDirectory ? "选择中…" : window.freeRouterDesktop ? "选择文件夹" : "Finder 选择"}
             </button>
           </div>
         </label>

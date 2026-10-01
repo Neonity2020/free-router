@@ -117,6 +117,21 @@ npm run build --prefix frontend
 
 参考：[Pi AI 官方文档](https://github.com/earendil-works/pi/tree/main/packages/ai)。
 
+## Electron 桌面应用
+
+桌面应用内置 Rust 网关、前端和 Pi Agent 依赖；打包版本使用 Electron 自带的 Node 运行 Agent，不需要用户单独安装 Node。窗口提供原生文件夹选择。启动默认使用 `http://127.0.0.1:8787/v1`，端口被占用时自动选择后续空闲端口，以应用显示的 baseURL 为准。应用内管理请求自动授权，外部模型客户端使用 Settings 中生成的网关密钥。
+
+```sh
+npm ci
+npm ci --prefix frontend
+npm ci --prefix agent
+npm run desktop:dev   # 构建前端与 Rust 后启动 Electron
+npm run desktop:pack  # 构建当前平台的桌面应用目录
+npm run desktop:dist  # macOS DMG/ZIP；Linux AppImage；Windows NSIS
+```
+
+需要构建平台对应的 Rust 工具链。桌面应用配置保存在 Electron `userData`（macOS 默认 `~/Library/Application Support/Free Router`），与应用安装目录分离。开发版首次启动会导入项目已保存的配置，不覆盖已有桌面配置；发布版不包含任何本地密钥。macOS 关闭窗口仍保留网关，菜单“退出 Free Router”停止网关与 Agent。桌面安装包目前为未签名构建，未接入桌面自动升级；Settings 提供 Releases 下载入口。原有 Web/CLI 发布与更新流程保持可用。
+
 ## Pi Agent Web UI
 
 在 Settings 中填写 **Exa API Key** 并点击“保存设置”，Pi Agent 即可调用 `web_search` 搜索网页，返回标题、来源链接和内容摘要。密钥保存在现有本地设置文件，不回显到状态接口或会话记录；留空保留原密钥，可勾选清除。已创建会话在下次任务读取最新密钥，无需重建会话。工具支持取消和 30 秒超时，默认 5 条结果（可指定 1–10 条）。参考：[Exa Search API](https://exa.ai/docs/reference/search)。

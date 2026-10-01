@@ -435,8 +435,10 @@ async fn chat(
 }
 #[tokio::main]
 async fn main() {
-    dotenvy::dotenv().ok();
-    dotenvy::from_filename("../.env").ok();
+    if env::var("FREE_ROUTER_DESKTOP").is_err() {
+        dotenvy::dotenv().ok();
+        dotenvy::from_filename("../.env").ok();
+    }
     let var = |name: &str, default: &str| env::var(name).unwrap_or_else(|_| default.to_owned());
     let mut providers = vec![
         Provider {
@@ -462,8 +464,10 @@ async fn main() {
     let executable_root = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-    let root = executable_root
-        .filter(|p| p.join("frontend/dist").exists())
+    let root = env::var("FREE_ROUTER_RESOURCE_ROOT")
+        .map(PathBuf::from)
+        .ok()
+        .or(executable_root.filter(|p| p.join("frontend/dist").exists()))
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".."));
     let settings_file = env::var("SETTINGS_FILE")
         .map(PathBuf::from)
@@ -497,7 +501,9 @@ async fn main() {
         data_root.join("update-settings.local.json"),
         data_root.join(".updates"),
     );
-    updater.start();
+    if env::var("FREE_ROUTER_DESKTOP").is_err() {
+        updater.start();
+    }
     let app = Arc::new(App {
         agent: agent::Bridge::new(
             root.clone(),
