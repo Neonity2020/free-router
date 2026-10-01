@@ -8,6 +8,7 @@ use axum::{
     Json, Router,
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::{
     env,
@@ -21,10 +22,42 @@ use tokio::sync::RwLock;
 use tower_http::services::{ServeDir, ServeFile};
 
 #[derive(Clone)]
+struct ApiKey {
+    id: String,
+    secret: String,
+}
+fn parse_keys(value: &Value) -> Result<Vec<ApiKey>, &'static str> {
+    let values: Vec<&Value> = match value {
+        Value::Null => vec![],
+        Value::String(s) if s.is_empty() => vec![],
+        Value::String(_) => vec![value],
+        Value::Array(values) if values.len() <= 16 => values.iter().collect(),
+        _ => return Err("Each provider supports at most 16 API keys"),
+    };
+    let mut keys = Vec::<ApiKey>::new();
+    for value in values {
+        let secret = value.as_str().ok_or("API keys must be strings")?;
+        if secret.is_empty()
+            || secret.len() > 4096
+            || !secret.bytes().all(|b| (33..=126).contains(&b))
+        {
+            return Err("API keys must be non-empty ASCII strings");
+        }
+        if !keys.iter().any(|k| k.secret == secret) {
+            keys.push(ApiKey {
+                id: format!("key_{:x}", Sha256::digest(secret.as_bytes())),
+                secret: secret.to_owned(),
+            });
+        }
+    }
+    Ok(keys)
+}
+#[derive(Clone)]
 struct Provider {
     id: &'static str,
     base: String,
-    key: String,
+    keys: Vec<ApiKey>,
+    cursor: Arc<AtomicU64>,
     model: &'static str,
 }
 struct App {
@@ -37,6 +70,7 @@ struct App {
     gateway_key_file: PathBuf,
     requests: AtomicU64,
     fallbacks: AtomicU64,
+    key_retries: AtomicU64,
 }
 type Shared = Arc<App>;
 fn error(status: StatusCode, message: &str) -> Response {
@@ -144,7 +178,7 @@ async fn generate_gateway_key(State(app): State<Shared>, headers: HeaderMap) -> 
 async fn status(State(app): State<Shared>) -> Json<Value> {
     let providers = app.providers.read().await;
     Json(
-        json!({"service":"Free Router","auth_required":!app.token.is_empty() || !app.gateway_key.read().await.is_empty(),"management_auth_required":!app.token.is_empty(),"requests":app.requests.load(Ordering::Relaxed),"fallbacks":app.fallbacks.load(Ordering::Relaxed),"default_provider":providers[0].id,"providers":providers.iter().map(|p|json!({"id":p.id,"model":p.model,"configured":!p.key.is_empty()})).collect::<Vec<_>>()}),
+        json!({"service":"Free Router","auth_required":!app.token.is_empty() || !app.gateway_key.read().await.is_empty(),"management_auth_required":!app.token.is_empty(),"requests":app.requests.load(Ordering::Relaxed),"fallbacks":app.fallbacks.load(Ordering::Relaxed),"key_retries":app.key_retries.load(Ordering::Relaxed),"default_provider":providers[0].id,"providers":providers.iter().map(|p|json!({"id":p.id,"model":p.model,"configured":!p.keys.is_empty(),"key_count":p.keys.len(),"keys":p.keys.iter().enumerate().map(|(i,k)|json!({"id":k.id,"label":format!("Key {}",i+1)})).collect::<Vec<_>>()})).collect::<Vec<_>>()}),
     )
 }
 // A custom header blocks cross-origin form submissions; gateway auth still applies.
@@ -166,31 +200,74 @@ async fn save_settings(
     let Some(fields) = body.as_object() else {
         return error(StatusCode::BAD_REQUEST, "Settings must be an object");
     };
+    let mut providers = app.providers.write().await;
+    let mut next = providers.clone();
     for (name, value) in fields {
         match name.as_str() {
             "openrouter" | "opencode" => {
-                if !value.is_null()
-                    && !value.as_str().is_some_and(|s| {
-                        !s.trim().is_empty()
-                            && s.len() <= 4096
-                            && s.bytes().all(|b| (33..=126).contains(&b))
-                    })
-                {
-                    return error(
-                        StatusCode::BAD_REQUEST,
-                        "API keys must be non-empty ASCII strings; use null to clear",
-                    );
-                }
+                let p = next.iter_mut().find(|p| p.id == name).unwrap();
+                let keys = if let Some(patch) = value.as_object() {
+                    if patch.keys().any(|k| k != "add" && k != "remove") {
+                        return error(StatusCode::BAD_REQUEST, "Unknown key pool field");
+                    }
+                    let mut keys = p.keys.clone();
+                    if let Some(remove) = patch.get("remove") {
+                        let Some(ids) = remove.as_array() else {
+                            return error(
+                                StatusCode::BAD_REQUEST,
+                                "remove must be an array of key IDs",
+                            );
+                        };
+                        for id in ids {
+                            let Some(id) = id.as_str() else {
+                                return error(StatusCode::BAD_REQUEST, "Invalid key ID");
+                            };
+                            if !p.keys.iter().any(|k| k.id == id) {
+                                return error(
+                                    StatusCode::CONFLICT,
+                                    "Key pool changed. Refresh and retry.",
+                                );
+                            }
+                            keys.retain(|k| k.id != id);
+                        }
+                    }
+                    if let Some(add) = patch.get("add") {
+                        if !add.is_array() {
+                            return error(
+                                StatusCode::BAD_REQUEST,
+                                "add must be an array of API keys",
+                            );
+                        }
+                        let Ok(add) = parse_keys(add) else {
+                            return error(StatusCode::BAD_REQUEST, "Invalid API key list");
+                        };
+                        for key in add {
+                            if !keys.iter().any(|k| k.id == key.id) {
+                                keys.push(key);
+                            }
+                        }
+                    }
+                    if keys.len() > 16 {
+                        return error(
+                            StatusCode::BAD_REQUEST,
+                            "Each provider supports at most 16 API keys",
+                        );
+                    }
+                    keys
+                } else {
+                    if value == "" {
+                        return error(StatusCode::BAD_REQUEST, "Use null or [] to clear API keys");
+                    }
+                    match parse_keys(value) {
+                        Ok(keys) => keys,
+                        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+                    }
+                };
+                p.keys = keys;
+                p.cursor = Arc::new(AtomicU64::new(0));
             }
             "default_provider" if value == "openrouter" || value == "opencode" => {}
             _ => return error(StatusCode::BAD_REQUEST, "Unknown or invalid settings field"),
-        }
-    }
-    let mut providers = app.providers.write().await;
-    let mut next = providers.clone();
-    for p in &mut next {
-        if let Some(value) = body.get(p.id) {
-            p.key = value.as_str().unwrap_or("").to_owned();
         }
     }
     if let Some(preferred) = body.get("default_provider").and_then(Value::as_str) {
@@ -198,7 +275,7 @@ async fn save_settings(
     }
     let mut saved = json!({"default_provider":next[0].id});
     for p in &next {
-        saved[p.id] = json!(p.key);
+        saved[p.id] = json!(p.keys.iter().map(|k| &k.secret).collect::<Vec<_>>());
     }
     let tmp = app.settings_file.with_extension("json.tmp");
     let persist = async {
@@ -268,7 +345,7 @@ async fn chat(
     let providers = app.providers.read().await.clone();
     let candidates: Vec<_> = providers
         .iter()
-        .filter(|p| !p.key.is_empty() && selected.is_none_or(|id| id == p.id))
+        .filter(|p| !p.keys.is_empty() && selected.is_none_or(|id| id == p.id))
         .collect();
     if candidates.is_empty() {
         return error(
@@ -282,44 +359,51 @@ async fn chat(
         if i > 0 {
             app.fallbacks.fetch_add(1, Ordering::Relaxed);
         }
-        body["model"] = json!(p.model);
-        let result = app
-            .client
-            .post(format!("{}/chat/completions", p.base.trim_end_matches('/')))
-            .bearer_auth(&p.key)
-            .json(&body)
-            .send()
-            .await;
-        match result {
-            Ok(upstream) => {
-                let code = upstream.status();
-                let retry = code.as_u16() == 429 || code.is_server_error();
-                if retry && i + 1 < candidates.len() {
-                    continue;
-                }
-                let content_type = upstream.headers().get("content-type").cloned();
-                let mut response = Response::new(Body::from_stream(upstream.bytes_stream()));
-                *response.status_mut() = code;
-                if let Some(ct) = content_type {
-                    response.headers_mut().insert("content-type", ct);
-                }
-                response
-                    .headers_mut()
-                    .insert("x-gateway-provider", p.id.parse().unwrap());
-                response
-                    .headers_mut()
-                    .insert("cache-control", "no-cache".parse().unwrap());
-                return response;
+        let start = p.cursor.fetch_add(1, Ordering::Relaxed) as usize % p.keys.len();
+        for offset in 0..p.keys.len() {
+            if offset > 0 {
+                app.key_retries.fetch_add(1, Ordering::Relaxed);
             }
-            Err(e) => {
-                last = error(
-                    if e.is_timeout() {
-                        StatusCode::GATEWAY_TIMEOUT
-                    } else {
-                        StatusCode::BAD_GATEWAY
-                    },
-                    "Unable to reach upstream provider",
-                );
+            let key = &p.keys[(start + offset) % p.keys.len()];
+            body["model"] = json!(p.model);
+            let result = app
+                .client
+                .post(format!("{}/chat/completions", p.base.trim_end_matches('/')))
+                .bearer_auth(&key.secret)
+                .json(&body)
+                .send()
+                .await;
+            match result {
+                Ok(upstream) => {
+                    let code = upstream.status();
+                    let retry = matches!(code.as_u16(), 401 | 403 | 429) || code.is_server_error();
+                    if retry && (offset + 1 < p.keys.len() || i + 1 < candidates.len()) {
+                        continue;
+                    }
+                    let content_type = upstream.headers().get("content-type").cloned();
+                    let mut response = Response::new(Body::from_stream(upstream.bytes_stream()));
+                    *response.status_mut() = code;
+                    if let Some(ct) = content_type {
+                        response.headers_mut().insert("content-type", ct);
+                    }
+                    response
+                        .headers_mut()
+                        .insert("x-gateway-provider", p.id.parse().unwrap());
+                    response
+                        .headers_mut()
+                        .insert("cache-control", "no-cache".parse().unwrap());
+                    return response;
+                }
+                Err(e) => {
+                    last = error(
+                        if e.is_timeout() {
+                            StatusCode::GATEWAY_TIMEOUT
+                        } else {
+                            StatusCode::BAD_GATEWAY
+                        },
+                        "Unable to reach upstream provider",
+                    );
+                }
             }
         }
     }
@@ -334,13 +418,17 @@ async fn main() {
         Provider {
             id: "opencode",
             base: var("OPENCODE_BASE_URL", "https://opencode.ai/zen/v1"),
-            key: var("OPENCODE_API_KEY", ""),
+            keys: parse_keys(&json!(var("OPENCODE_API_KEY", "")))
+                .expect("Invalid OPENCODE_API_KEY"),
+            cursor: Arc::new(AtomicU64::new(0)),
             model: "space-bunny-free",
         },
         Provider {
             id: "openrouter",
             base: var("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
-            key: var("OPENROUTER_API_KEY", ""),
+            keys: parse_keys(&json!(var("OPENROUTER_API_KEY", "")))
+                .expect("Invalid OPENROUTER_API_KEY"),
+            cursor: Arc::new(AtomicU64::new(0)),
             model: "stealth/space-bunny-alpha",
         },
     ];
@@ -362,8 +450,8 @@ async fn main() {
         )
         .expect("Invalid local settings JSON");
         for p in &mut providers {
-            if let Some(key) = saved.get(p.id).and_then(Value::as_str) {
-                p.key = key.to_owned();
+            if let Some(value) = saved.get(p.id) {
+                p.keys = parse_keys(value).expect("Invalid saved API key pool");
             }
         }
         if let Some(preferred) = saved.get("default_provider").and_then(Value::as_str) {
@@ -396,6 +484,7 @@ async fn main() {
         token: var("GATEWAY_API_KEY", ""),
         requests: AtomicU64::new(0),
         fallbacks: AtomicU64::new(0),
+        key_retries: AtomicU64::new(0),
     });
     let dist = root.join("frontend/dist");
     let router = Router::new()
@@ -432,6 +521,15 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn legacy_keys_and_validation() {
+        assert_eq!(parse_keys(&json!("legacy-key")).unwrap().len(), 1);
+        assert!(parse_keys(&json!("")).unwrap().is_empty());
+        assert!(parse_keys(&Value::Null).unwrap().is_empty());
+        assert_eq!(parse_keys(&json!(["a", "a", "b"])).unwrap().len(), 2);
+        assert!(parse_keys(&json!([""])).is_err());
+        assert!(parse_keys(&json!(["line\nkey"])).is_err());
+    }
     #[test]
     fn model_routes() {
         assert_eq!(route("space-bunny"), Some(None));

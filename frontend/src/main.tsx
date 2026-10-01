@@ -20,7 +20,13 @@ type Status = {
   default_provider: string;
   requests: number;
   fallbacks: number;
-  providers: { id: string; model: string; configured: boolean }[];
+  providers: {
+    id: string;
+    model: string;
+    configured: boolean;
+    key_count: number;
+    keys: { id: string; label: string }[];
+  }[];
 };
 function App() {
   const [status, setStatus] = useState<Status | null>(null),
@@ -32,7 +38,8 @@ function App() {
     [result, setResult] = useState(""),
     [running, setRunning] = useState(false),
     [copied, setCopied] = useState(false);
-  const [draftKeys, setDraftKeys] = useState<Record<string, string>>({});
+  const [draftKeys, setDraftKeys] = useState<Record<string, string[]>>({});
+  const [removedKeys, setRemovedKeys] = useState<Record<string, string[]>>({});
   const [clearKeys, setClearKeys] = useState<Record<string, boolean>>({});
   const [preferred, setPreferred] = useState("");
   const [saving, setSaving] = useState(false);
@@ -82,10 +89,14 @@ function App() {
   async function saveSettings() {
     setSaving(true);
     setSettingsMessage("");
-    const updates: Record<string, string | null> = {};
+    const updates: Record<string, unknown> = {};
     for (const id of ["openrouter", "opencode"]) {
       if (clearKeys[id]) updates[id] = null;
-      else if (draftKeys[id]?.trim()) updates[id] = draftKeys[id].trim();
+      else {
+        const add = (draftKeys[id] || []).map((k) => k.trim()).filter(Boolean);
+        const remove = removedKeys[id] || [];
+        if (add.length || remove.length) updates[id] = { add, remove };
+      }
     }
     if (preferred) updates.default_provider = preferred;
     try {
@@ -101,6 +112,7 @@ function App() {
       const data = await response.json();
       if (!response.ok) throw Error(data.error?.message || "保存失败");
       setDraftKeys({});
+      setRemovedKeys({});
       setClearKeys({});
       setPreferred("");
       setSettingsMessage("设置已保存，立即生效。重启后仍然保留。");
@@ -490,7 +502,8 @@ function App() {
                 </div>
                 <h3>上游 API Keys</h3>
                 <p>
-                  密钥保存在本机后端，保存后立即生效。留空保留已有密钥，勾选清除可移除密钥。
+                  每个上游最多保存 16 个 API
+                  Key，按请求轮询。新增或删除后点击保存设置，立即生效。
                 </p>
                 {status?.management_auth_required && (
                   <label>
@@ -505,9 +518,10 @@ function App() {
                   </label>
                 )}
                 {(["openrouter", "opencode"] as const).map((id) => {
-                  const configured = status?.providers.find(
-                    (p) => p.id === id,
-                  )?.configured;
+                  const provider = status?.providers.find((p) => p.id === id);
+                  const configured = provider?.configured;
+                  const drafts = draftKeys[id] || [""];
+                  const removed = removedKeys[id] || [];
                   return (
                     <div className="settings-provider" key={id}>
                       <div className="provider-status">
@@ -515,28 +529,104 @@ function App() {
                           {id === "openrouter" ? "OpenRouter" : "OpenCode Zen"}
                         </b>
                         <span className={configured ? "ready" : ""}>
-                          {configured ? "已保存密钥" : "未配置密钥"}
+                          {configured
+                            ? `${provider?.key_count} 个密钥 · 轮询`
+                            : "未配置密钥"}
                         </span>
                       </div>
-                      <label>
-                        {id === "openrouter"
-                          ? "OpenRouter API Key"
-                          : "OpenCode API Key"}
-                        <input
-                          type="password"
-                          autoComplete="new-password"
-                          value={draftKeys[id] || ""}
-                          disabled={saving || clearKeys[id]}
-                          placeholder={
-                            configured
-                              ? "输入新密钥以替换；留空保留"
-                              : "粘贴 API Key"
-                          }
-                          onChange={(e) =>
-                            setDraftKeys({ ...draftKeys, [id]: e.target.value })
-                          }
-                        />
-                      </label>
+                      <a
+                        className="get-api-key"
+                        href={id === "openrouter" ? "https://openrouter.ai/settings/keys" : "https://opencode.ai/auth"}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        aria-label={`获取 ${id === "openrouter" ? "OpenRouter" : "OpenCode"} API Key（新窗口）`}
+                      >
+                        获取 API Key <ArrowUpRight size={14} />
+                      </a>
+                      <span className="key-link-hint">登录官方控制台创建密钥</span>
+                      {provider?.keys?.map((entry) => (
+                        <div
+                          className={`saved-key ${removed.includes(entry.id) || clearKeys[id] ? "pending-removal" : ""}`}
+                          key={entry.id}
+                        >
+                          <span>
+                            {entry.label} ·{" "}
+                            {removed.includes(entry.id) || clearKeys[id]
+                              ? "待删除"
+                              : "已保存"}
+                          </span>
+                          <button
+                            type="button"
+                            disabled={saving || clearKeys[id]}
+                            onClick={() =>
+                              setRemovedKeys({
+                                ...removedKeys,
+                                [id]: removed.includes(entry.id)
+                                  ? removed.filter((k) => k !== entry.id)
+                                  : [...removed, entry.id],
+                              })
+                            }
+                          >
+                            {removed.includes(entry.id) ? "撤销删除" : "删除"}
+                          </button>
+                        </div>
+                      ))}
+                      {drafts.map((draft, index) => (
+                        <div className="key-draft" key={index}>
+                          <label>
+                            {id === "openrouter" ? "OpenRouter" : "OpenCode"} 新
+                            API Key {index + 1}
+                            <input
+                              type="password"
+                              autoComplete="new-password"
+                              value={draft}
+                              disabled={saving || clearKeys[id]}
+                              placeholder="粘贴新增的 API Key；留空不修改"
+                              onChange={(e) =>
+                                setDraftKeys({
+                                  ...draftKeys,
+                                  [id]: drafts.map((v, i) =>
+                                    i === index ? e.target.value : v,
+                                  ),
+                                })
+                              }
+                            />
+                          </label>
+                          {drafts.length > 1 && (
+                            <button
+                              type="button"
+                              className="secondary"
+                              disabled={saving || clearKeys[id]}
+                              aria-label={`移除 ${id} 新 API Key ${index + 1}`}
+                              onClick={() =>
+                                setDraftKeys({
+                                  ...draftKeys,
+                                  [id]: drafts.filter((_, i) => i !== index),
+                                })
+                              }
+                            >
+                              移除
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        className="secondary"
+                        disabled={
+                          saving ||
+                          clearKeys[id] ||
+                          (provider?.key_count || 0) -
+                            removed.length +
+                            drafts.length >=
+                            16
+                        }
+                        onClick={() =>
+                          setDraftKeys({ ...draftKeys, [id]: [...drafts, ""] })
+                        }
+                      >
+                        + 添加 API Key
+                      </button>
                       {configured && (
                         <label className="clear-key">
                           <input
@@ -550,7 +640,7 @@ function App() {
                               })
                             }
                           />{" "}
-                          清除此上游密钥
+                          清除此上游全部密钥
                         </label>
                       )}
                     </div>

@@ -24,7 +24,7 @@ cargo run --manifest-path backend/Cargo.toml
 | `openrouter/space-bunny` | 指定 OpenRouter | `stealth/space-bunny-alpha` |
 | `opencode/space-bunny` | 指定 OpenCode Zen | `space-bunny-free` |
 
-也支持上游原始 ID `stealth/space-bunny-alpha` 与 `space-bunny-free`。在 Settings 页面选择优先上游即可改变自动路由顺序。连接失败、HTTP 429 或 5xx 在响应头返回前触发故障切换。已开始输出的流不会重试，避免重复内容。400/401/403 等请求错误直接返回。上游响应体、工具调用、多模态参数和 SSE 按原协议透传；响应模型名保留上游原始 ID。`x-gateway-provider` 响应头指示实际使用的上游。
+也支持上游原始 ID `stealth/space-bunny-alpha` 与 `space-bunny-free`。在 Settings 页面选择优先上游即可改变自动路由顺序。连接失败、HTTP 429 或 5xx 在响应头返回前触发故障切换。已开始输出的流不会重试，避免重复内容。401/403、429、5xx 或连接失败时按轮询顺序尝试池内其他 Key，每个 Key 最多尝试一次；池内耗尽后自动路由可切换上游。400 等其他错误直接返回。上游响应体、工具调用、多模态参数和 SSE 按原协议透传；响应模型名保留上游原始 ID。`x-gateway-provider` 响应头指示实际使用的上游。
 
 ## 调用
 
@@ -51,7 +51,7 @@ print(response.choices[0].message.content)
 
 ## 配置
 
-Settings 支持保存、替换、清除上游密钥和调整优先级。空输入保留旧值，清除后即停用该上游。保存会立即生效，已开始的请求仍使用发起时配置。持久化失败时不会修改运行配置。
+Settings 支持每个上游最多 16 个 API Key，可逐个添加、删除或全部清除，并可调整上游优先级。新输入留空保留旧值，全部清除后即停用该上游。保存会立即生效，已开始的请求仍使用发起时配置。持久化失败时不会修改运行配置。
 
 可选环境配置参见 `.env.example`；Settings 保存值优先于环境配置（包括已清除的密钥）。默认仅监听 `127.0.0.1:8787`，适合本地使用。更改 `HOST` 可以开放监听；对外使用请配置网关密钥。`OPENROUTER_BASE_URL`、`OPENCODE_BASE_URL` 支持覆盖上游地址。请求体上限 10 MiB，连接超时 15 秒，整次请求超时 300 秒。统计随重启清零。
 
@@ -85,3 +85,11 @@ Smoke 测试使用本地模拟上游，不需要真实密钥，验证模型映�
 当前目录尚未关联 GitHub 仓库，需要你填入实际发布仓库后才能检查真实版本。工作流尚未在 GitHub 上运行。
 
 参考：[GitHub Releases API](https://docs.github.com/en/rest/releases/releases)。
+
+## 多 Key 轮询
+
+每个上游拥有独立 Key 池和并发安全的轮询游标，逐请求轮换起始 Key。指定上游模型也支持池内故障切换。流式输出开始后不重试。轮询游标在重启或修改该 Key 池时归零；优先上游调整不会重置未修改的 Key 池。没有冷却或暂停状态，失败 Key 仍参与后续轮询。
+
+旧 `settings.local.json` 中的单字符串 Key 自动兼容；新保存格式为字符串数组。环境变量单 Key 作为初始池。重复 Key 自动去重，状态 API 只返回数量、标签和不可逆标识，不回显 Key。
+
+`POST /api/settings` 保留单字符串替换、`null` 清除，同时支持字符串数组整体替换或 `{"add":["key"],"remove":["key_id"]}` 增量操作。所有 Key 配置仍要求原有管理鉴权和 `X-Gateway-Settings: 1`。保存失败不改变运行池。

@@ -1,5 +1,6 @@
 """Exercise the real gateway against isolated local upstream servers."""
 import json
+from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
 import socket
@@ -17,6 +18,10 @@ class Upstream(BaseHTTPRequestHandler):
     def do_POST(self):
         data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         seen.append((self.server.provider, data, self.headers.get('Authorization')))
+        credential = self.headers.get('Authorization', '')
+        failed_codes = {'Bearer invalid':401, 'Bearer forbidden':403, 'Bearer limited':429, 'Bearer broken':500, 'Bearer malformed':400}
+        if self.server.provider == 'openrouter' and credential in failed_codes:
+            self.send_response(failed_codes[credential]); self.end_headers(); self.wfile.write(b'{"error":{"message":"mock failure"}}'); return
         if self.server.provider == 'opencode':
             self.send_response(429)
             self.end_headers()
@@ -101,11 +106,36 @@ try:
     assert request('/api/settings', {'openrouter':''})[0] == 400
     assert request('/api/settings', {'openrouter':'replacement', 'default_provider':'openrouter'})[0] == 200
     assert settings_file.stat().st_mode & 0o777 == 0o600
-    assert json.loads(settings_file.read_text())['openrouter'] == 'replacement'
+    assert json.loads(settings_file.read_text())['openrouter'] == ['replacement']
     request('/v1/chat/completions', body)
     assert seen[-1][2] == 'Bearer replacement'
     assert json.loads(request('/api/status')[1])['default_provider'] == 'openrouter'
     assert 'replacement' not in request('/api/status')[1].decode()
+    # Round robin under concurrent requests, and key-local failure handling.
+    direct = dict(body, model='openrouter/space-bunny')
+    assert request('/api/settings', {'openrouter':['pool-a','pool-b','pool-c','pool-a']})[0] == 200
+    assert next(p for p in json.loads(request('/api/status')[1])['providers'] if p['id']=='openrouter')['key_count'] == 3
+    before = len(seen)
+    with ThreadPoolExecutor(max_workers=9) as executor:
+        responses = list(executor.map(lambda _:request('/v1/chat/completions',direct),range(9)))
+    assert all(r[0]==200 for r in responses)
+    credentials = [row[2] for row in seen[before:]]
+    assert all(credentials.count('Bearer '+k)==3 for k in ['pool-a','pool-b','pool-c'])
+    for failing in ['invalid','forbidden','limited','broken']:
+        assert request('/api/settings', {'openrouter':[failing,'good']})[0] == 200
+        before = len(seen)
+        assert request('/v1/chat/completions',direct)[0]==200
+        assert [r[2] for r in seen[before:]] == ['Bearer '+failing,'Bearer good']
+    assert request('/api/settings', {'openrouter':['malformed','good']})[0] == 200
+    before=len(seen)
+    assert request('/v1/chat/completions',direct)[0]==400 and len(seen)==before+1
+    assert request('/api/settings', {'openrouter':{'add':['pool-a','pool-b'],'remove':[]}})[0] == 200
+    pool = next(p for p in json.loads(request('/api/status')[1])['providers'] if p['id']=='openrouter')
+    remove = pool['keys'][0]['id']
+    assert request('/api/settings', {'openrouter':{'remove':[remove]}})[0] == 200
+    assert request('/api/settings', {'openrouter':{'remove':[remove]}})[0] == 409
+    assert request('/api/settings', {'openrouter':['x']*17})[0] == 400
+    assert request('/api/settings', {'openrouter':['replacement','persisted-second']})[0] == 200
     proc.terminate(); proc.wait(timeout=5)
     proc = subprocess.Popen([str(ROOT / 'backend/target/debug/free-router')], cwd=ROOT, env=env, stdout=subprocess.DEVNULL)
     for _ in range(50):
@@ -117,6 +147,9 @@ try:
     assert request('/v1/models', token=rotated_key)[0] == 200
     request('/v1/chat/completions', body, token=rotated_key)
     assert seen[-1][2] == 'Bearer replacement'
+    assert next(p for p in json.loads(request('/api/status')[1])['providers'] if p['id']=='openrouter')['key_count'] == 2
+    assert request('/v1/chat/completions',direct)[0] == 200
+    assert seen[-1][2] == 'Bearer persisted-second'
     assert request('/api/settings', {'openrouter':None,'opencode':None})[0] == 200
     assert request('/v1/chat/completions', body)[0] == 503
     assert not any(p['configured'] for p in json.loads(request('/api/status')[1])['providers'])
@@ -133,7 +166,7 @@ try:
     assert json.loads(request('/api/status')[1])['management_auth_required'] is False
     assert json.loads(request('/api/gateway-key')[1])['key'] == rotated_key
     assert json.loads(request('/api/updates')[1])['config']['auto_download'] is False
-    print('PASS: gateway key generation/rotation/reload, admin isolation, authentication without environment key, settings save/reload/clear, immediate effect, restricted file permissions, settings authentication,  authentication, model list, validation, fallback, model mapping, key isolation, direct routing, SSE and statistics')
+    print('PASS: concurrent round robin, retryable keys, non-retryable errors, deduplication, pool edits and legacy persistence; gateway key generation/rotation/reload, admin isolation, authentication without environment key, settings save/reload/clear, immediate effect, restricted file permissions, settings authentication,  authentication, model list, validation, fallback, model mapping, key isolation, direct routing, SSE and statistics')
 finally:
     proc.terminate()
     proc.wait(timeout=5)
