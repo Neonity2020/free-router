@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   ArrowUpRight,
+  Bot,
   Check,
   Copy,
   Network,
@@ -15,6 +16,9 @@ import "./style.css";
 import UpdateSettings from "./UpdateSettings";
 import CopyModelId from "./CopyModelId";
 import ThemeSwitcher from "./ThemeSwitcher";
+import PiAgent from "./PiAgent";
+import MarkdownMessage from "./MarkdownMessage";
+import { PI_SDK_VERSION, gatewayPiSnippet, streamGatewayReply } from "./piGateway";
 type Status = {
   auth_required: boolean;
   management_auth_required: boolean;
@@ -32,7 +36,8 @@ type Status = {
 function App() {
   const [status, setStatus] = useState<Status | null>(null),
     [offline, setOffline] = useState(false),
-    [tab, setTab] = useState("overview"),
+    [tab, setTab] = useState(() => ["overview", "playground", "agent", "setup"].includes(location.hash.slice(1))
+      ? location.hash.slice(1) : "overview"),
     [model, setModel] = useState("space-bunny"),
     [prompt, setPrompt] = useState("用三句话介绍你自己。"),
     [key, setKey] = useState(""),
@@ -49,6 +54,13 @@ function App() {
   const [keyBusy, setKeyBusy] = useState(false);
   const [keyMessage, setKeyMessage] = useState("");
   const [keyVisible, setKeyVisible] = useState(false);
+  const requestController = useRef<AbortController | null>(null);
+  const [thinking, setThinking] = useState("");
+  const [requestMessage, setRequestMessage] = useState("");
+  const [usage, setUsage] = useState<{ input: number; output: number } | null>(null);
+  const [example, setExample] = useState("curl");
+  useEffect(() => () => requestController.current?.abort(), []);
+  useEffect(() => { history.replaceState(null, "", `#${tab}`); }, [tab]);
   async function loadGatewayKey(generate = false) {
     setKeyBusy(true);
     setKeyMessage("");
@@ -146,32 +158,44 @@ function App() {
     return () => clearInterval(timer);
   }, []);
   const snippet = `curl ${base}/chat/completions \\\n  -H "Authorization: Bearer ${status?.auth_required ? "YOUR_GATEWAY_KEY" : "local"}" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model":"${model}","messages":[{"role":"user","content":"你好"}],"stream":true}'`;
+  const displayedSnippet = example === "pi" ? gatewayPiSnippet(base, model) : snippet;
   async function run() {
+    if (requestController.current) return;
+    const controller = new AbortController();
+    requestController.current = controller;
     setRunning(true);
     setResult("");
+    setThinking("");
+    setRequestMessage("");
+    setUsage(null);
     try {
-      const r = await fetch("/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${gatewayKey || key || "local"}`,
-        },
-        body: JSON.stringify({
-          model,
-          messages: [{ role: "user", content: prompt }],
-          stream: false,
-        }),
+      const message = await streamGatewayReply({
+        baseUrl: `${location.origin}/v1`,
+        modelId: model,
+        apiKey: gatewayKey || key || "local",
+        prompt,
+        signal: controller.signal,
+        onText: setResult,
+        onThinking: setThinking,
       });
-      const data = await r.json();
-      if (!r.ok) throw Error(data.error?.message || `HTTP ${r.status}`);
-      setResult(
-        data.choices?.[0]?.message?.content || JSON.stringify(data, null, 2),
+      setRequestMessage(
+        message.stopReason === "aborted" || controller.signal.aborted
+          ? "已停止生成。"
+          : message.stopReason === "length"
+            ? "已达到输出长度上限。"
+            : "生成完成。",
       );
-      refresh();
+      if (message.usage.totalTokens > 0) setUsage(message.usage);
     } catch (e) {
-      setResult(`调用失败：${e instanceof Error ? e.message : String(e)}`);
+      setRequestMessage(
+        controller.signal.aborted
+          ? "已停止生成。"
+          : `调用失败：${e instanceof Error ? e.message : String(e)}`,
+      );
     } finally {
+      requestController.current = null;
       setRunning(false);
+      refresh();
     }
   }
   return (
@@ -191,6 +215,7 @@ function App() {
           {[
             ["overview", "网关概览", Network],
             ["playground", "模型测试", Terminal],
+            ["agent", "Pi Agent", Bot],
             ["setup", "Settings", Settings2],
           ].map(([id, label, Icon]) => (
             <button
@@ -219,6 +244,8 @@ function App() {
               ? "网关概览"
               : tab === "playground"
                 ? "模型测试"
+                : tab === "agent"
+                  ? "Pi Agent"
                 : "Settings"}
           </span>
           <div className="header-actions">
@@ -237,6 +264,8 @@ function App() {
                   ? "连接模型，简化调用。"
                   : tab === "playground"
                     ? "和 Space Bunny 对话。"
+                    : tab === "agent"
+                      ? "让 Pi 完成编程任务。"
                     : "几分钟，完成接入。"}
               </h1>
               <p>一个本地入口，连接 OpenRouter 与 OpenCode 的 Space Bunny。</p>
@@ -244,10 +273,10 @@ function App() {
             <button
               className="primary"
               onClick={() =>
-                setTab(tab === "playground" ? "overview" : "playground")
+                setTab(tab === "playground" || tab === "agent" ? "overview" : "playground")
               }
             >
-              {tab === "playground" ? "返回概览" : "测试模型"}
+              {tab === "playground" || tab === "agent" ? "返回概览" : "测试模型"}
               <ArrowUpRight size={17} />
             </button>
           </div>
@@ -388,12 +417,13 @@ function App() {
             <section className="panel">
               <div className="section-title">
                 <h3>Playground</h3>
-                <span>CHAT COMPLETIONS</span>
+                <span>PI AI SDK · {PI_SDK_VERSION} · STREAMING</span>
               </div>
               <label>
                 选择模型
                 <select
                   value={model}
+                  disabled={running}
                   onChange={(e) => setModel(e.target.value)}
                 >
                   <option>space-bunny</option>
@@ -427,12 +457,22 @@ function App() {
                 <Play size={16} />
                 {running ? "正在生成…" : "发送请求"}
               </button>
+              {running && (
+                <button className="secondary" onClick={() => requestController.current?.abort()}>
+                  停止生成
+                </button>
+              )}
+              {requestMessage && <p role="status">{requestMessage}</p>}
+              {usage && <p>输入 {usage.input} tokens · 输出 {usage.output} tokens</p>}
+              {thinking && <details><summary>思考过程</summary><MarkdownMessage text={thinking} /></details>}
               <div className="output">
                 <span>RESPONSE</span>
-                <pre>{result || "模型的回复将在这里显示。"}</pre>
+                <MarkdownMessage text={result || "模型的回复将在这里显示。"} />
               </div>
             </section>
           )}
+          {tab === "agent" && <PiAgent managementRequired={!!status?.management_auth_required}
+            gatewayKey={key} onKeyChange={setKey} />}
           {tab === "setup" && (
             <>
               <section className="panel">
@@ -691,14 +731,14 @@ function App() {
               <UpdateSettings gatewayKey={key} />
             </>
           )}
-          <section className="integration">
+          {tab !== "agent" && <section className="integration">
             <div className="section-title">
               <h3>
                 <Terminal size={18} /> 开始调用
               </h3>
               <button
                 onClick={() =>
-                  navigator.clipboard.writeText(snippet).then(() => {
+                  navigator.clipboard.writeText(displayedSnippet).then(() => {
                     setCopied(true);
                     setTimeout(() => setCopied(false), 1500);
                   })
@@ -708,17 +748,24 @@ function App() {
                 {copied ? "已复制" : "复制代码"}
               </button>
             </div>
+            <label>
+              调用方式
+              <select value={example} onChange={(e) => setExample(e.target.value)}>
+                <option value="curl">cURL</option>
+                <option value="pi">Pi AI SDK {PI_SDK_VERSION}</option>
+              </select>
+            </label>
             <div className="selected-model">
               <span>模型 ID</span>
               <code>{model}</code>
               <CopyModelId id={model} />
             </div>
-            <pre>{snippet}</pre>
+            <pre>{displayedSnippet}</pre>
             <div className="hint">
               <span className="dot" /> 可用于 OpenAI SDK、聊天客户端和支持自定义
               baseURL 的工具
             </div>
-          </section>
+          </section>}
           <footer>
             FREE ROUTER <span>本地连接，无限可能。</span>
             <span>v0.1.0</span>

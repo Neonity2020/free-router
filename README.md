@@ -4,10 +4,11 @@ Vite + React 前端，Rust / Axum 后端。通过统一的 OpenAI-compatible bas
 
 ## 启动
 
-需要 Node.js 20.19+ 和 最新版稳定 Rust。
+需要 Node.js 22.19+ 和 最新版稳定 Rust。
 
 ```sh
 npm install --prefix frontend
+npm ci --prefix agent
 npm run build --prefix frontend
 cargo run --manifest-path backend/Cargo.toml
 ```
@@ -97,3 +98,46 @@ Smoke 测试使用本地模拟上游，不需要真实密钥，验证模型映�
 ## 外观主题
 
 顶部“外观主题”可选择跟随系统、浅色或暗色。默认跟随系统并响应系统外观变化，手动选择保存在浏览器本地；刷新后恢复，多个同源页面同步选择。主题不影响网关配置或 API Key。
+
+## Pi AI SDK
+
+已集成官方 `@earendil-works/pi-ai@0.99.2`（2026-10-01 核实的最新版本），使用当前 `createModels` / `createProvider` API。Playground 通过 Pi SDK 调用本地网关，支持流式回复、停止生成、思考内容与上游返回的 token 用量。上游未返回用量时不显示统计。上游 API Key 仍只由 Rust 后端读取；SDK 仅接收本地网关密钥，不持久化到浏览器。
+
+“开始调用”中选择 **Pi AI SDK**，可复制完整的 Node.js 示例，支持三个网关模型 ID。安装命令：`npm install @earendil-works/pi-ai@0.99.2`，通过 `GATEWAY_API_KEY` 环境变量传入 Settings 中生成的网关密钥。示例的上下文窗口 32768 和输出上限 4096 是保守的本地默认值，不代表上游真实限制；示例费用元数据为占位值，应用不显示费用估算。
+
+SDK 要求 Node.js 22.19+。仅按需加载 OpenAI Chat Completions 适配器。Rust 后端继续提供统一路由、Key 轮询和故障切换。
+
+验证（使用隔离配置和模拟上游，无需真实密钥）：
+
+```sh
+cargo build --manifest-path backend/Cargo.toml
+npm test --prefix frontend
+npm run build --prefix frontend
+```
+
+参考：[Pi AI 官方文档](https://github.com/earendil-works/pi/tree/main/packages/ai)。
+
+## Pi Agent Web UI
+
+Pi Agent 和 Playground 的模型回复及思考内容支持 Markdown：标题、加粗、引用、列表、表格、任务清单、链接和代码块。代码块显示语言标识并可一键复制，长代码及表格可以横向滚动；浅色与暗色主题均有对应样式。流式生成期间实时更新，工具参数和终端日志保持纯文本。原始 HTML 不执行，链接保留默认安全 URL 过滤。
+
+左侧 **Pi Agent** 使用官方 `@earendil-works/pi-coding-agent@0.99.2` 提供编程代理。选择一个已存在的绝对工作目录及网关模型，点击“新建编程会话”，即可通过连续对话阅读代码、创建文件、精确编辑、运行命令和测试。界面实时更新回复、工具参数、执行输出和失败状态；“停止任务”会取消模型调用及正在运行的工具。可切换或删除会话，删除仅清除对话记录，不撤销文件修改。
+
+Agent 直接使用现有网关配置、上游 Key 轮询和自动故障切换，无需另填上游密钥。若设置 `GATEWAY_API_KEY`，进入 Agent 后须输入管理密钥；普通模型调用密钥不能授权编程接口。Rust 在首次打开 Agent 时启动 Node.js 服务，并通过随机内部令牌连接到仅监听 loopback 的随机端口。Rust 退出时停止 Agent 与工具。更换网关密钥后，下一次任务使用当前凭据。
+
+从其他机器访问 Pi Agent 必须设置 `GATEWAY_API_KEY` 管理密钥；未设置时 Agent 接口只接受 loopback 连接。浏览器请求还要求管理自定义头，跨域站点不能通过表单触发编程操作。
+
+工具以本机用户权限执行，工作目录用于路径解析，**不是安全沙箱**；仅在信任的本地环境使用。默认工作目录为项目根目录，可通过 `PI_AGENT_WORKSPACE` 指定；`PI_NODE_BIN` 可指定 Node 可执行文件。Agent 不加载全局 Pi 扩展、登录凭据或其他模型配置。会话保存在内存，刷新 Web UI 可以继续，服务重启后会话清空，文件修改保留。最多保留 12 个会话，同时运行一个任务；界面最多展示最近 160 条记录，长工具输出会截断。实际模型的工具调用支持和可用性仍由上游决定。
+
+开发环境：`npm ci --prefix agent`，然后启动 Rust 网关。发布包包含 Agent 依赖，但本机仍需要 Node.js 22.19+；只使用网关代理时不需要启动 Node Agent。
+
+端到端验证：
+
+```sh
+cargo build --manifest-path backend/Cargo.toml
+npm test --prefix agent
+```
+
+测试用模拟模型驱动真实 SDK，在临时目录完成 `write → edit → bash → read`，验证对话、鉴权、并发拒绝、停止工具和删除会话。参考：[Pi Coding Agent SDK](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md)。
+
+依赖审计：官方 SDK 0.99.2 的发布 shrinkwrap 固定了 `brace-expansion@5.0.9`，`npm audit` 当前报告一个高危拒绝服务漏洞；已验证 npm 的普通覆盖和 `audit fix` 未能替换这个嵌套锁定版本。尚未消除该依赖风险，保持本地使用并避免处理不可信的复杂 glob 输入。参考：[上游漏洞公告](https://github.com/advisories/GHSA-qhr7-859c-m2p7)。

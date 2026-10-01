@@ -34,8 +34,12 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: python3 scripts/package_release.py --verify-version "$RELEASE_TAG"
       - run: npm ci --prefix frontend
+      - run: npm ci --prefix agent --omit=dev
       - run: npm run build --prefix frontend
       - run: cargo test --locked --manifest-path backend/Cargo.toml
+      - run: cargo build --locked --manifest-path backend/Cargo.toml
+      - run: npm test --prefix frontend
+      - run: npm test --prefix agent
       - run: cargo build --locked --release --target ${{ matrix.target }} --manifest-path backend/Cargo.toml
       - run: python3 scripts/package_release.py --target ${{ matrix.target }}
       - uses: actions/upload-artifact@v4

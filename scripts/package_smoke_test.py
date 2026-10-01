@@ -19,6 +19,7 @@ with tempfile.TemporaryDirectory(prefix='free-router-package-') as directory:
     with tarfile.open(args.archive) as tar:
         names = tar.getnames()
         assert 'free-router' in names and 'frontend/dist/index.html' in names
+        assert 'agent/server.mjs' in names and 'agent/package-lock.json' in names
         assert not any(Path(name).name in ['settings.local.json','gateway-key.local.txt','update-settings.local.json','.env'] for name in names)
         tar.extractall(directory, filter='data')
     with socket.socket() as sock:
@@ -37,6 +38,10 @@ with tempfile.TemporaryDirectory(prefix='free-router-package-') as directory:
         asset = re.search(r'src="(/assets/[^"]+\.js)"', html).group(1)
         with urllib.request.urlopen(base+asset) as response: assert len(response.read())>1000
         with urllib.request.urlopen(base+'/api/updates') as response: assert json.load(response)['current_version']=='0.1.0'
-        print('PASS: packaged binary, frontend assets, update API and no credentials in archive; started outside source checkout')
+        request = urllib.request.Request(base+'/api/agent/status', headers={'X-Gateway-Settings':'1'})
+        with urllib.request.urlopen(request, timeout=30) as response:
+            agent = json.load(response)
+            assert agent['version']=='0.99.2' and agent['default_cwd']==directory
+        print('PASS: packaged binary, frontend, Agent startup, update API and no credentials; started outside source checkout')
     finally:
         proc.terminate(); proc.wait(timeout=5)

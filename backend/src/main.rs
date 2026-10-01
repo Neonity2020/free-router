@@ -1,10 +1,11 @@
+mod agent;
 mod updates;
 use axum::{
     body::Body,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{any, get, post},
     Json, Router,
 };
 use serde_json::{json, Value};
@@ -61,6 +62,7 @@ struct Provider {
     model: &'static str,
 }
 struct App {
+    agent: agent::Bridge,
     client: reqwest::Client,
     updater: Arc<updates::Updater>,
     providers: RwLock<Vec<Provider>>,
@@ -471,6 +473,18 @@ async fn main() {
     );
     updater.start();
     let app = Arc::new(App {
+        agent: agent::Bridge::new(
+            root.clone(),
+            format!(
+                "http://{}:{}/v1",
+                if var("HOST", "127.0.0.1") == "0.0.0.0" {
+                    "127.0.0.1".to_owned()
+                } else {
+                    var("HOST", "127.0.0.1")
+                },
+                var("PORT", "8787")
+            ),
+        ),
         updater,
         gateway_key: RwLock::new(saved_gateway_key),
         gateway_key_file,
@@ -489,6 +503,7 @@ async fn main() {
     let dist = root.join("frontend/dist");
     let router = Router::new()
         .route("/api/status", get(status))
+        .route("/api/agent/{*path}", any(agent::proxy))
         .route(
             "/api/gateway-key",
             get(gateway_key).post(generate_gateway_key),
@@ -504,18 +519,22 @@ async fn main() {
         .fallback_service(
             ServeDir::new(&dist).not_found_service(ServeFile::new(dist.join("index.html"))),
         )
-        .with_state(app);
+        .with_state(app.clone());
     let address = format!("{}:{}", var("HOST", "127.0.0.1"), var("PORT", "8787"));
     let listener = tokio::net::TcpListener::bind(&address)
         .await
         .expect("Cannot bind gateway address");
     println!("Free Router listening at http://{address} — API baseURL: http://{address}/v1");
-    axum::serve(listener, router)
-        .with_graceful_shutdown(async {
-            tokio::signal::ctrl_c().await.ok();
-        })
-        .await
-        .unwrap();
+    axum::serve(
+        listener,
+        router.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async {
+        tokio::signal::ctrl_c().await.ok();
+    })
+    .await
+    .unwrap();
+    app.agent.shutdown().await;
 }
 
 #[cfg(test)]
