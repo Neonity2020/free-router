@@ -14,6 +14,7 @@ import {
 import "./style.css";
 import UpdateSettings from "./UpdateSettings";
 import CopyModelId from "./CopyModelId";
+import ThemeSwitcher from "./ThemeSwitcher";
 type Status = {
   auth_required: boolean;
   management_auth_required: boolean;
@@ -220,9 +221,12 @@ function App() {
                 ? "模型测试"
                 : "Settings"}
           </span>
-          <span className="local">
-            <Radio size={14} /> 本地部署
-          </span>
+          <div className="header-actions">
+            <ThemeSwitcher />
+            <span className="local">
+              <Radio size={14} /> 本地部署
+            </span>
+          </div>
         </header>
         <div className="content">
           <div className="heading">
@@ -536,14 +540,20 @@ function App() {
                       </div>
                       <a
                         className="get-api-key"
-                        href={id === "openrouter" ? "https://openrouter.ai/settings/keys" : "https://opencode.ai/auth"}
+                        href={
+                          id === "openrouter"
+                            ? "https://openrouter.ai/settings/keys"
+                            : "https://opencode.ai/auth"
+                        }
                         target="_blank"
                         rel="noopener noreferrer"
                         aria-label={`获取 ${id === "openrouter" ? "OpenRouter" : "OpenCode"} API Key（新窗口）`}
                       >
                         获取 API Key <ArrowUpRight size={14} />
                       </a>
-                      <span className="key-link-hint">登录官方控制台创建密钥</span>
+                      <span className="key-link-hint">
+                        登录官方控制台创建密钥
+                      </span>
                       {provider?.keys?.map((entry) => (
                         <div
                           className={`saved-key ${removed.includes(entry.id) || clearKeys[id] ? "pending-removal" : ""}`}
