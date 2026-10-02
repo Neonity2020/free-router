@@ -20,7 +20,7 @@ class Upstream(BaseHTTPRequestHandler):
         seen.append((self.server.provider, data, self.headers.get('Authorization')))
         credential = self.headers.get('Authorization', '')
         failed_codes = {'Bearer invalid':401, 'Bearer forbidden':403, 'Bearer limited':429, 'Bearer broken':500, 'Bearer malformed':400}
-        if self.server.provider == 'openrouter' and credential in failed_codes:
+        if self.server.provider in ['openrouter', 'commandcode'] and credential in failed_codes:
             self.send_response(failed_codes[credential]); self.end_headers(); self.wfile.write(b'{"error":{"message":"mock failure"}}'); return
         if self.server.provider == 'opencode':
             self.send_response(429)
@@ -41,7 +41,7 @@ def request(path, data=None, token='test-local', settings_header=True):
     except urllib.error.HTTPError as e: return e.code, e.read(), e.headers
 
 servers = []
-for provider in ['opencode', 'openrouter']:
+for provider in ['opencode', 'openrouter', 'commandcode']:
     server = ThreadingHTTPServer(('127.0.0.1', 0), Upstream)
     server.provider = provider
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -52,6 +52,7 @@ with socket.socket() as s:
 settings_dir = tempfile.TemporaryDirectory()
 settings_file = Path(settings_dir.name) / "settings.json"
 env = dict(os.environ, SETTINGS_FILE=str(settings_file), PORT=str(port), HOST='127.0.0.1', GATEWAY_API_KEY='test-local', DEFAULT_PROVIDER='opencode', OPENCODE_API_KEY='mock-zen', OPENROUTER_API_KEY='mock-router', OPENCODE_BASE_URL=f'http://127.0.0.1:{servers[0].server_port}/v1', OPENROUTER_BASE_URL=f'http://127.0.0.1:{servers[1].server_port}/v1')
+env.update(COMMANDCODE_API_KEY='', COMMANDCODE_BASE_URL=f'http://127.0.0.1:{servers[2].server_port}/provider/v1')
 proc = subprocess.Popen([str(ROOT / 'backend/target/debug/free-router')], cwd=ROOT, env=env, stdout=subprocess.DEVNULL)
 try:
     for _ in range(50):
@@ -84,7 +85,7 @@ try:
     assert request('/api/updates/settings', {'repository':'','auto_download':False})[0] == 200
     assert json.loads(request('/api/updates')[1])['config']['auto_download'] is False
     assert request('/v1/models', token='wrong')[0] == 401
-    assert len(json.loads(request('/v1/models')[1])['data']) == 3
+    assert len(json.loads(request('/v1/models')[1])['data']) == 4
     assert request('/v1/chat/completions', {'model':'unknown','messages':[{'role':'user','content':'hello'}]})[0] == 400
     body = {'model':'space-bunny','messages':[{'role':'user','content':'hello'}], 'temperature':.2}
     code, data, headers = request('/v1/chat/completions', body)
@@ -135,7 +136,32 @@ try:
     assert request('/api/settings', {'openrouter':{'remove':[remove]}})[0] == 200
     assert request('/api/settings', {'openrouter':{'remove':[remove]}})[0] == 409
     assert request('/api/settings', {'openrouter':['x']*17})[0] == 400
-    assert request('/api/settings', {'openrouter':['replacement','persisted-second']})[0] == 200
+    # Third provider: alias mapping, arbitrary model IDs, SSE, key retries and automatic fallback.
+    assert request('/api/settings', {'commandcode':['cmd-one','cmd-two'], 'default_provider':'commandcode'})[0] == 200
+    for expected in ['cmd-one', 'cmd-two']:
+        code, data, headers = request('/v1/chat/completions', dict(body, model='commandcode/space-bunny', stream=True))
+        assert code == 200 and headers['x-gateway-provider'] == 'commandcode' and b'[DONE]' in data
+        assert seen[-1][1]['model'] == 'stealth/space-bunny-alpha' and seen[-1][2] == 'Bearer '+expected
+    assert request('/v1/chat/completions', dict(body, model='commandcode/deepseek/deepseek-v4-flash'))[0] == 200
+    assert seen[-1][1]['model'] == 'deepseek/deepseek-v4-flash'
+    request('/v1/chat/completions', body)
+    assert seen[-1][0] == 'commandcode'
+    assert request('/api/settings', {'commandcode':['invalid','cmd-good']})[0] == 200
+    before = len(seen)
+    assert request('/v1/chat/completions', dict(body, model='commandcode/space-bunny'))[0] == 200
+    assert [r[2] for r in seen[before:]] == ['Bearer invalid','Bearer cmd-good']
+    assert request('/api/settings', {'openrouter':['broken'], 'default_provider':'opencode'})[0] == 200
+    before = len(seen)
+    assert request('/v1/chat/completions', body)[0] == 200
+    assert [r[0] for r in seen[before:]][:3] == ['opencode','openrouter','commandcode']
+    assert 'cmd-good' not in request('/api/status')[1].decode()
+    assert request('/api/settings', {'commandcode':{'add':['cmd-extra']}})[0] == 200
+    assert request('/api/settings', {'commandcode':{'add':[' \u200bBearer cmd-extra\ufeff ']}})[0] == 200
+    code, invalid_key_body, _ = request('/api/settings', {'commandcode':{'add':['secret with space']}})
+    message = json.loads(invalid_key_body)['error']['message']
+    assert code == 400 and 'commandcode' in message and '第 1 个' in message
+    assert 'secret with space' not in message
+    assert request('/api/settings', {'openrouter':['replacement','persisted-second'], 'default_provider':'openrouter'})[0] == 200
     proc.terminate(); proc.wait(timeout=5)
     proc = subprocess.Popen([str(ROOT / 'backend/target/debug/free-router')], cwd=ROOT, env=env, stdout=subprocess.DEVNULL)
     for _ in range(50):
@@ -148,9 +174,10 @@ try:
     request('/v1/chat/completions', body, token=rotated_key)
     assert seen[-1][2] == 'Bearer replacement'
     assert next(p for p in json.loads(request('/api/status')[1])['providers'] if p['id']=='openrouter')['key_count'] == 2
+    assert next(p for p in json.loads(request('/api/status')[1])['providers'] if p['id']=='commandcode')['key_count'] == 3
     assert request('/v1/chat/completions',direct)[0] == 200
     assert seen[-1][2] == 'Bearer persisted-second'
-    assert request('/api/settings', {'openrouter':None,'opencode':None})[0] == 200
+    assert request('/api/settings', {'openrouter':None,'opencode':None,'commandcode':None})[0] == 200
     assert request('/v1/chat/completions', body)[0] == 503
     assert not any(p['configured'] for p in json.loads(request('/api/status')[1])['providers'])
     proc.terminate(); proc.wait(timeout=5)

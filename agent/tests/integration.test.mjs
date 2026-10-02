@@ -56,6 +56,7 @@ test('Web API executes the official Pi coding tools through the Rust gateway', a
       ...process.env, HOST: '127.0.0.1', PORT: String(port), PI_AGENT_WORKSPACE: directory,
       SETTINGS_FILE: resolve(directory, 'settings.json'), GATEWAY_API_KEY: 'mock-management',
       DEFAULT_PROVIDER: 'openrouter', OPENROUTER_API_KEY: 'mock-upstream', OPENCODE_API_KEY: '',
+      COMMANDCODE_API_KEY: 'mock-upstream', COMMANDCODE_BASE_URL: `http://127.0.0.1:${mock.address().port}/provider/v1`,
       OPENROUTER_BASE_URL: `http://127.0.0.1:${mock.address().port}/v1`,
       EXA_BASE_URL: `http://127.0.0.1:${mock.address().port}`, EXA_API_KEY: '',
     },
@@ -96,7 +97,7 @@ test('Web API executes the official Pi coding tools through the Rust gateway', a
   const status = await api('status'); assert.equal(status.status, 200, JSON.stringify(status.data) + errors);
   assert.equal(status.data.default_cwd, directory);
   assert.equal((await api('sessions', 'POST', { cwd: 'relative', model: 'space-bunny' })).status, 400);
-  const created = await api('sessions', 'POST', { cwd: directory, model: 'space-bunny' });
+  const created = await api('sessions', 'POST', { cwd: directory, model: 'commandcode/space-bunny' });
   assert.equal(created.status, 201, JSON.stringify(created.data) + errors);
   const id = created.data.id;
   assert.deepEqual(created.data.tools.sort(), ['bash', 'edit', 'find', 'grep', 'ls', 'read', 'web_search', 'write']);

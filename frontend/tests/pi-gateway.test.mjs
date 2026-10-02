@@ -52,6 +52,7 @@ test('Pi SDK streams through the real Rust gateway', async (t) => {
       OPENROUTER_API_KEY: 'mock-router', OPENCODE_API_KEY: 'mock-zen',
       OPENROUTER_BASE_URL: `http://127.0.0.1:${upstream.address().port}/v1`,
       OPENCODE_BASE_URL: `http://127.0.0.1:${upstream.address().port}/v1`,
+      COMMANDCODE_API_KEY: 'mock-command', COMMANDCODE_BASE_URL: `http://127.0.0.1:${upstream.address().port}/provider/v1`,
     },
   });
   t.after(async () => {
@@ -68,6 +69,19 @@ test('Pi SDK streams through the real Rust gateway', async (t) => {
     catch { await new Promise(r => setTimeout(r, 100)); }
   }
   assert.ok(ready, 'gateway must start');
+  const probe = await fetch(`${baseUrl}/chat/completions`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer mock-gateway' },
+    body: JSON.stringify({ model: 'space-bunny', messages: [{ role: 'user', content: 'hi' }], stream: true,
+      max_completion_tokens: 1, thinking: { type: 'disabled' }, enable_thinking: false,
+      reasoning_effort: 'none', reasoning: { effort: 'none' } }),
+  });
+  assert.equal(probe.status, 200);
+  await probe.text();
+  assert.equal(seen.at(-1).data.max_completion_tokens, 1);
+  for (const hint of ['thinking', 'enable_thinking', 'reasoning_effort', 'reasoning']) {
+    assert.ok(!(hint in seen.at(-1).data));
+  }
+  seen.length = 0;
   const call = (overrides = {}) => streamGatewayReply({
     baseUrl, modelId: 'space-bunny', apiKey: 'mock-gateway', prompt: 'hello',
     signal: new AbortController().signal, onText() {}, onThinking() {}, ...overrides,
@@ -83,6 +97,9 @@ test('Pi SDK streams through the real Rust gateway', async (t) => {
   assert.deepEqual(seen.map(r => r.key), ['Bearer mock-zen', 'Bearer mock-router']);
   assert.ok(seen.every(r => r.data.stream === true && r.data.max_tokens === 4096));
   await call({ modelId: 'openrouter/space-bunny' });
+  await call({ modelId: 'commandcode/space-bunny' });
+  assert.equal(seen.at(-1).key, 'Bearer mock-command');
+  assert.equal(seen.at(-1).data.model, 'stealth/space-bunny-alpha');
   assert.equal((await call({ modelId: 'openrouter/space-bunny', prompt: 'length' })).stopReason, 'length');
   await assert.rejects(call({ modelId: 'opencode/space-bunny' }), /mock rate limit/);
   await assert.rejects(call({ apiKey: 'wrong-key' }), /401|[Uu]nauthorized|[Ii]nvalid/);

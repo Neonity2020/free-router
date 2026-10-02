@@ -6,6 +6,7 @@ export const GATEWAY_MODEL_IDS = [
   "space-bunny",
   "openrouter/space-bunny",
   "opencode/space-bunny",
+  "commandcode/space-bunny",
 ] as const;
 
 export function gatewayPiSnippet(baseUrl: string, modelId: string) {

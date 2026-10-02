@@ -1,6 +1,6 @@
 # Free Router
 
-Vite + React 前端，Rust / Axum 后端。通过统一的 OpenAI-compatible baseURL 调用 OpenRouter 和 OpenCode Zen 的 Space Bunny。
+Vite + React 前端，Rust / Axum 后端。通过统一的 OpenAI-compatible baseURL 调用 OpenRouter、OpenCode Zen 和 Command Code 的 Space Bunny。
 
 ## 启动
 
@@ -13,7 +13,7 @@ npm run build --prefix frontend
 cargo run --manifest-path backend/Cargo.toml
 ```
 
-打开 http://127.0.0.1:8787，API baseURL 为 `http://127.0.0.1:8787/v1`。在 Settings 页面填入 OpenRouter 或 OpenCode API Key，点击“保存设置”即可使用，无需重启。密钥保存在根目录 `settings.local.json`，文件已排除 Git，Unix 权限为 0600。前端不回显已保存的密钥，也不写入浏览器存储。未配置密钥时调用返回 503。
+打开 http://127.0.0.1:8787，API baseURL 为 `http://127.0.0.1:8787/v1`。在 Settings 页面填入 OpenRouter、OpenCode 或 Command Code API Key，点击“保存设置”即可使用，无需重启。密钥保存在根目录 `settings.local.json`，文件已排除 Git，Unix 权限为 0600。前端不回显已保存的密钥，也不写入浏览器存储。未配置密钥时调用返回 503。
 
 开发时分别运行 Rust 后端和 `npm run dev --prefix frontend`，打开 http://127.0.0.1:5173。Vite 将 `/api`、`/v1` 转发到 8787；修改 PORT 后也需要修改 Vite 代理目标。
 
@@ -24,6 +24,10 @@ cargo run --manifest-path backend/Cargo.toml
 | `space-bunny` | 自动选择已配置上游，默认 OpenCode 优先 | 根据选中的上游映射 |
 | `openrouter/space-bunny` | 指定 OpenRouter | `stealth/space-bunny-alpha` |
 | `opencode/space-bunny` | 指定 OpenCode Zen | `space-bunny-free` |
+| `commandcode/space-bunny` | 指定 Command Code | `stealth/space-bunny-alpha` |
+| `commandcode/<模型ID>` | 指定 Command Code 的其他 Chat Completions 模型 | 去掉 `commandcode/` 前缀，保留原模型 ID |
+
+Command Code 密钥在 Settings 中填写，支持最多 16 个 Key 的轮询、添加和删除，也可设为自动路由优先上游。默认 Provider API baseURL 为 `https://api.commandcode.ai/provider/v1`，可用 `COMMANDCODE_BASE_URL` 覆盖；环境变量密钥为 `COMMANDCODE_API_KEY`。未配置 Command Code 时不参与自动路由。除 Space Bunny 别名外，例如 `commandcode/deepseek/deepseek-v4-flash` 会原样转发 `deepseek/deepseek-v4-flash`，可用模型以官方目录为准。本网关当前提供 Chat Completions，不将 Claude 的 Anthropic Messages 或 Responses 协议转换为聊天接口。参考：[Command Code Provider API](https://commandcode.ai/docs/provider)、[Studio API Key](https://commandcode.ai/studio/)。
 
 也支持上游原始 ID `stealth/space-bunny-alpha` 与 `space-bunny-free`。在 Settings 页面选择优先上游即可改变自动路由顺序。连接失败、HTTP 429 或 5xx 在响应头返回前触发故障切换。已开始输出的流不会重试，避免重复内容。401/403、429、5xx 或连接失败时按轮询顺序尝试池内其他 Key，每个 Key 最多尝试一次；池内耗尽后自动路由可切换上游。400 等其他错误直接返回。上游响应体、工具调用、多模态参数和 SSE 按原协议透传；响应模型名保留上游原始 ID。`x-gateway-provider` 响应头指示实际使用的上游。
 
@@ -162,3 +166,5 @@ npm test --prefix agent
 测试用模拟模型驱动真实 SDK，在临时目录完成 `write → edit → bash → read`，验证对话、鉴权、并发拒绝、停止工具和删除会话。参考：[Pi Coding Agent SDK](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md)。
 
 依赖审计：官方 SDK 0.99.2 的发布 shrinkwrap 固定了 `brace-expansion@5.0.9`，`npm audit` 当前报告一个高危拒绝服务漏洞；已验证 npm 的普通覆盖和 `audit fix` 未能替换这个嵌套锁定版本。尚未消除该依赖风险，保持本地使用并避免处理不可信的复杂 glob 输入。参考：[上游漏洞公告](https://github.com/advisories/GHSA-qhr7-859c-m2p7)。
+
+Space Bunny 路由兼容 ZCode 自动发送的关闭思考参数：移除 `thinking: {type: "disabled"}`、`enable_thinking: false`、`reasoning_effort: "none"` 和 `reasoning: {effort: "none"}`，避免上游拒绝请求；显式开启思考的参数与其他 Command Code 模型保持透传。Settings 支持粘贴带 `Bearer` 前缀或首尾空白的 API Key，格式错误会提示上游与密钥序号，不回显密钥。

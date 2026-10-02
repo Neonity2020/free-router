@@ -34,6 +34,8 @@ type Status = {
     keys: { id: string; label: string }[];
   }[];
 };
+const PROVIDER_NAMES: Record<string, string> = { openrouter: "OpenRouter", opencode: "OpenCode Zen", commandcode: "Command Code" };
+const PROVIDER_KEY_URLS: Record<string, string> = { openrouter: "https://openrouter.ai/settings/keys", opencode: "https://opencode.ai/auth", commandcode: "https://commandcode.ai/studio" };
 function App() {
   const [status, setStatus] = useState<Status | null>(null),
     [offline, setOffline] = useState(false),
@@ -106,7 +108,7 @@ function App() {
     setSaving(true);
     setSettingsMessage("");
     const updates: Record<string, unknown> = {};
-    for (const id of ["openrouter", "opencode"]) {
+    for (const id of ["openrouter", "opencode", "commandcode"]) {
       if (clearKeys[id]) updates[id] = null;
       else {
         const add = (draftKeys[id] || []).map((k) => k.trim()).filter(Boolean);
@@ -275,7 +277,7 @@ function App() {
                       ? "让 Pi 完成编程任务。"
                     : "几分钟，完成接入。"}
               </h1>
-              <p>一个本地入口，连接 OpenRouter 与 OpenCode 的 Space Bunny。</p>
+              <p>一个本地入口，连接 OpenRouter、OpenCode 与 Command Code。</p>
             </div>
             <button
               className="primary"
@@ -343,6 +345,7 @@ function App() {
                     <div className="node upstream">
                       OpenCode <span>↗</span>
                     </div>
+                    <div className="node upstream">Command Code <span>↗</span></div>
                   </div>
                 </div>
               </section>
@@ -353,7 +356,7 @@ function App() {
                     {status
                       ? status.providers.filter((p) => p.configured).length
                       : "—"}
-                    <small>/ 2</small>
+                    <small>/ {status?.providers.length || 3}</small>
                   </strong>
                   <p>API 密钥已配置</p>
                 </article>
@@ -377,7 +380,7 @@ function App() {
               </div>
               <div className="section-title">
                 <h3>模型路由</h3>
-                <span>01 AUTOMATIC · 02 DIRECT</span>
+                <span>01 AUTOMATIC · 03 DIRECT</span>
               </div>
               <div className="routes">
                 {[
@@ -392,6 +395,7 @@ function App() {
                     "stealth/space-bunny-alpha",
                   ],
                   ["opencode/space-bunny", "OpenCode Zen", "space-bunny-free"],
+                  ["commandcode/space-bunny", "Command Code", "stealth/space-bunny-alpha"],
                 ].map(([id, name, desc], i) => (
                   <div className="route-row" key={id}>
                     <button
@@ -436,6 +440,7 @@ function App() {
                   <option>space-bunny</option>
                   <option>openrouter/space-bunny</option>
                   <option>opencode/space-bunny</option>
+                  <option>commandcode/space-bunny</option>
                 </select>
               </label>
               {status?.auth_required && (
@@ -568,7 +573,7 @@ function App() {
                     />
                   </label>
                 )}
-                {(["openrouter", "opencode"] as const).map((id) => {
+                {(["openrouter", "opencode", "commandcode"] as const).map((id) => {
                   const provider = status?.providers.find((p) => p.id === id);
                   const configured = provider?.configured;
                   const drafts = draftKeys[id] || [""];
@@ -577,7 +582,7 @@ function App() {
                     <div className="settings-provider" key={id}>
                       <div className="provider-status">
                         <b>
-                          {id === "openrouter" ? "OpenRouter" : "OpenCode Zen"}
+                          {PROVIDER_NAMES[id]}
                         </b>
                         <span className={configured ? "ready" : ""}>
                           {configured
@@ -588,13 +593,11 @@ function App() {
                       <a
                         className="get-api-key"
                         href={
-                          id === "openrouter"
-                            ? "https://openrouter.ai/settings/keys"
-                            : "https://opencode.ai/auth"
+                          PROVIDER_KEY_URLS[id]
                         }
                         target="_blank"
                         rel="noopener noreferrer"
-                        aria-label={`获取 ${id === "openrouter" ? "OpenRouter" : "OpenCode"} API Key（新窗口）`}
+                        aria-label={`获取 ${PROVIDER_NAMES[id]} API Key（新窗口）`}
                       >
                         获取 API Key <ArrowUpRight size={14} />
                       </a>
@@ -631,7 +634,7 @@ function App() {
                       {drafts.map((draft, index) => (
                         <div className="key-draft" key={index}>
                           <label>
-                            {id === "openrouter" ? "OpenRouter" : "OpenCode"} 新
+                            {PROVIDER_NAMES[id]} 新
                             API Key {index + 1}
                             <input
                               type="password"
@@ -719,6 +722,7 @@ function App() {
                   >
                     <option value="opencode">OpenCode Zen</option>
                     <option value="openrouter">OpenRouter</option>
+                    <option value="commandcode">Command Code</option>
                   </select>
                 </label>
                 <button

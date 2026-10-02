@@ -27,22 +27,39 @@ struct ApiKey {
     id: String,
     secret: String,
 }
-fn parse_keys(value: &Value) -> Result<Vec<ApiKey>, &'static str> {
+fn parse_keys(value: &Value) -> Result<Vec<ApiKey>, String> {
     let values: Vec<&Value> = match value {
         Value::Null => vec![],
         Value::String(s) if s.is_empty() => vec![],
         Value::String(_) => vec![value],
         Value::Array(values) if values.len() <= 16 => values.iter().collect(),
-        _ => return Err("Each provider supports at most 16 API keys"),
+        _ => return Err("每家上游最多支持 16 个 API Key".into()),
     };
     let mut keys = Vec::<ApiKey>::new();
-    for value in values {
-        let secret = value.as_str().ok_or("API keys must be strings")?;
-        if secret.is_empty()
-            || secret.len() > 4096
-            || !secret.bytes().all(|b| (33..=126).contains(&b))
+    for (index, value) in values.into_iter().enumerate() {
+        let fail = |reason: &str| format!("第 {} 个 API Key：{reason}", index + 1);
+        let raw = value.as_str().ok_or_else(|| fail("必须是字符串"))?;
+        // Copying an Authorization header should store only its credential.
+        // Strip surrounding copy artifacts, never whitespace inside a credential.
+        let trim = |s: &str| {
+            s.trim_matches(|c: char| c.is_whitespace() || matches!(c, '\u{feff}' | '\u{200b}'))
+                .to_owned()
+        };
+        let mut secret = trim(raw);
+        if secret
+            .get(..7)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("bearer "))
         {
-            return Err("API keys must be non-empty ASCII strings");
+            secret = trim(&secret[7..]);
+        }
+        if secret.is_empty() {
+            return Err(fail("不能为空"));
+        }
+        if secret.len() > 4096 {
+            return Err(fail("长度超过 4096 字节，请只粘贴密钥本身"));
+        }
+        if !secret.bytes().all(|b| (33..=126).contains(&b)) {
+            return Err(fail("含有空格、换行或非 ASCII 字符，请只粘贴密钥本身"));
         }
         if !keys.iter().any(|k| k.secret == secret) {
             keys.push(ApiKey {
@@ -60,6 +77,18 @@ struct Provider {
     keys: Vec<ApiKey>,
     cursor: Arc<AtomicU64>,
     model: &'static str,
+}
+fn prioritize(providers: &mut [Provider], preferred: &str) {
+    providers.sort_by_key(|p| {
+        (
+            p.id != preferred,
+            match p.id {
+                "opencode" => 0,
+                "openrouter" => 1,
+                _ => 2,
+            },
+        )
+    });
 }
 struct App {
     agent: agent::Bridge,
@@ -226,7 +255,7 @@ async fn save_settings(
                     }
                 }
             }
-            "openrouter" | "opencode" => {
+            "openrouter" | "opencode" | "commandcode" => {
                 let p = next.iter_mut().find(|p| p.id == name).unwrap();
                 let keys = if let Some(patch) = value.as_object() {
                     if patch.keys().any(|k| k != "add" && k != "remove") {
@@ -260,8 +289,14 @@ async fn save_settings(
                                 "add must be an array of API keys",
                             );
                         }
-                        let Ok(add) = parse_keys(add) else {
-                            return error(StatusCode::BAD_REQUEST, "Invalid API key list");
+                        let add = match parse_keys(add) {
+                            Ok(keys) => keys,
+                            Err(message) => {
+                                return error(
+                                    StatusCode::BAD_REQUEST,
+                                    &format!("{name}：{message}"),
+                                )
+                            }
                         };
                         for key in add {
                             if !keys.iter().any(|k| k.id == key.id) {
@@ -282,18 +317,21 @@ async fn save_settings(
                     }
                     match parse_keys(value) {
                         Ok(keys) => keys,
-                        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+                        Err(message) => {
+                            return error(StatusCode::BAD_REQUEST, &format!("{name}：{message}"))
+                        }
                     }
                 };
                 p.keys = keys;
                 p.cursor = Arc::new(AtomicU64::new(0));
             }
-            "default_provider" if value == "openrouter" || value == "opencode" => {}
+            "default_provider"
+                if value == "openrouter" || value == "opencode" || value == "commandcode" => {}
             _ => return error(StatusCode::BAD_REQUEST, "Unknown or invalid settings field"),
         }
     }
     if let Some(preferred) = body.get("default_provider").and_then(Value::as_str) {
-        next.sort_by_key(|p| p.id != preferred);
+        prioritize(&mut next, preferred);
     }
     let mut saved = json!({"default_provider":next[0].id});
     saved["exa"] = json!(next_exa);
@@ -333,16 +371,44 @@ async fn models(State(app): State<Shared>, headers: HeaderMap) -> Response {
     if !api_authorized(&app, &headers).await {
         return error(StatusCode::UNAUTHORIZED, "Invalid gateway API key");
     }
-    Json(json!({"object":"list","data":(["space-bunny","openrouter/space-bunny","opencode/space-bunny"].iter().map(|id|json!({"id":id,"object":"model","created":0,"owned_by":"free-router"})).collect::<Vec<_>>())})).into_response()
+    Json(json!({"object":"list","data":(["space-bunny","openrouter/space-bunny","opencode/space-bunny","commandcode/space-bunny"].iter().map(|id|json!({"id":id,"object":"model","created":0,"owned_by":"free-router"})).collect::<Vec<_>>())})).into_response()
 }
 fn route(model: &str) -> Option<Option<&'static str>> {
     match model {
         "space-bunny" => Some(None),
         "openrouter/space-bunny" | "stealth/space-bunny-alpha" => Some(Some("openrouter")),
         "opencode/space-bunny" | "space-bunny-free" => Some(Some("opencode")),
+        id if id.strip_prefix("commandcode/").is_some_and(|model| {
+            !model.is_empty()
+                && model.len() <= 200
+                && model
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-._/:".contains(&b))
+        }) =>
+        {
+            Some(Some("commandcode"))
+        }
         _ => None,
     }
 }
+// Clients such as ZCode send several provider-specific ways to disable reasoning.
+// Space Bunny aliases already use the gateway's non-reasoning configuration;
+// forwarding these no-op hints makes some upstreams reject valid requests.
+fn normalize_space_bunny_request(body: &mut Value) {
+    if body.get("thinking") == Some(&json!({"type": "disabled"})) {
+        body.as_object_mut().unwrap().remove("thinking");
+    }
+    if body.get("enable_thinking") == Some(&json!(false)) {
+        body.as_object_mut().unwrap().remove("enable_thinking");
+    }
+    if body.get("reasoning_effort") == Some(&json!("none")) {
+        body.as_object_mut().unwrap().remove("reasoning_effort");
+    }
+    if body.get("reasoning") == Some(&json!({"effort": "none"})) {
+        body.as_object_mut().unwrap().remove("reasoning");
+    }
+}
+
 async fn chat(
     State(app): State<Shared>,
     headers: HeaderMap,
@@ -351,10 +417,15 @@ async fn chat(
     if !api_authorized(&app, &headers).await {
         return error(StatusCode::UNAUTHORIZED, "Invalid gateway API key");
     }
-    let Some(selected) = body.get("model").and_then(Value::as_str).and_then(route) else {
+    let requested_model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_owned();
+    let Some(selected) = route(&requested_model) else {
         return error(
             StatusCode::BAD_REQUEST,
-            "Unknown model. Use space-bunny, openrouter/space-bunny or opencode/space-bunny",
+            "Unknown model. Use space-bunny, openrouter/space-bunny, opencode/space-bunny or commandcode/<model ID>",
         );
     };
     if !body
@@ -365,6 +436,17 @@ async fn chat(
             StatusCode::BAD_REQUEST,
             "messages must be a non-empty array",
         );
+    }
+    if matches!(
+        requested_model.as_str(),
+        "space-bunny"
+            | "openrouter/space-bunny"
+            | "opencode/space-bunny"
+            | "commandcode/space-bunny"
+            | "stealth/space-bunny-alpha"
+            | "space-bunny-free"
+    ) {
+        normalize_space_bunny_request(&mut body);
     }
     let providers = app.providers.read().await.clone();
     let candidates: Vec<_> = providers
@@ -389,7 +471,15 @@ async fn chat(
                 app.key_retries.fetch_add(1, Ordering::Relaxed);
             }
             let key = &p.keys[(start + offset) % p.keys.len()];
-            body["model"] = json!(p.model);
+            body["model"] = json!(if p.id == "commandcode"
+                && requested_model != "commandcode/space-bunny"
+            {
+                requested_model
+                    .strip_prefix("commandcode/")
+                    .unwrap_or(p.model)
+            } else {
+                p.model
+            });
             let result = app
                 .client
                 .post(format!("{}/chat/completions", p.base.trim_end_matches('/')))
@@ -457,10 +547,20 @@ async fn main() {
             cursor: Arc::new(AtomicU64::new(0)),
             model: "stealth/space-bunny-alpha",
         },
+        Provider {
+            id: "commandcode",
+            base: var(
+                "COMMANDCODE_BASE_URL",
+                "https://api.commandcode.ai/provider/v1",
+            ),
+            keys: parse_keys(&json!(var("COMMANDCODE_API_KEY", "")))
+                .expect("Invalid COMMANDCODE_API_KEY"),
+            cursor: Arc::new(AtomicU64::new(0)),
+            model: "stealth/space-bunny-alpha",
+        },
     ];
-    if var("DEFAULT_PROVIDER", "opencode") == "openrouter" {
-        providers.reverse();
-    }
+    let preferred = var("DEFAULT_PROVIDER", "opencode");
+    prioritize(&mut providers, &preferred);
     let executable_root = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(|p| p.to_path_buf()));
@@ -487,7 +587,7 @@ async fn main() {
             }
         }
         if let Some(preferred) = saved.get("default_provider").and_then(Value::as_str) {
-            providers.sort_by_key(|p| p.id != preferred);
+            prioritize(&mut providers, preferred);
         }
     }
     let data_root = settings_file.parent().unwrap_or(&root);
@@ -581,12 +681,44 @@ mod tests {
         assert_eq!(parse_keys(&json!(["a", "a", "b"])).unwrap().len(), 2);
         assert!(parse_keys(&json!([""])).is_err());
         assert!(parse_keys(&json!(["line\nkey"])).is_err());
+        let normalized =
+            parse_keys(&json!([" \u{200b}Bearer test-key\u{feff} ", "test-key"])).unwrap();
+        assert_eq!(normalized.len(), 1);
+        assert_eq!(normalized[0].secret, "test-key");
+        assert!(parse_keys(&json!(["valid", "secret with space"]))
+            .err()
+            .unwrap()
+            .contains("第 2 个"));
+        assert!(parse_keys(&json!(["x".repeat(4097)]))
+            .err()
+            .unwrap()
+            .contains("4096"));
+    }
+    #[test]
+    fn space_bunny_accepts_zcode_disabled_reasoning_hints() {
+        let mut body = json!({"messages":[{"role":"user","content":"hi"}],"max_completion_tokens":1,"thinking":{"type":"disabled"},"enable_thinking":false,"reasoning_effort":"none","reasoning":{"effort":"none"}});
+        normalize_space_bunny_request(&mut body);
+        assert_eq!(
+            body,
+            json!({"messages":[{"role":"user","content":"hi"}],"max_completion_tokens":1})
+        );
+        let mut enabled = json!({"thinking":{"type":"enabled","budget_tokens":1024},"enable_thinking":true,"reasoning_effort":"high","reasoning":{"effort":"none","exclude":true}});
+        let original = enabled.clone();
+        normalize_space_bunny_request(&mut enabled);
+        assert_eq!(enabled, original);
     }
     #[test]
     fn model_routes() {
         assert_eq!(route("space-bunny"), Some(None));
         assert_eq!(route("stealth/space-bunny-alpha"), Some(Some("openrouter")));
         assert_eq!(route("space-bunny-free"), Some(Some("opencode")));
+        assert_eq!(route("commandcode/space-bunny"), Some(Some("commandcode")));
+        assert_eq!(
+            route("commandcode/deepseek/deepseek-v4-flash"),
+            Some(Some("commandcode"))
+        );
+        assert_eq!(route("commandcode/"), None);
+        assert_eq!(route("commandcode/invalid model"), None);
         assert_eq!(route("unknown"), None);
     }
 }
