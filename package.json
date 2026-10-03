@@ -7,10 +7,12 @@
   "author": "Neonity2020",
   "main": "desktop/main.cjs",
   "scripts": {
+    "cli:install": "npm run build --prefix frontend && npm ci --prefix agent --omit=dev && cargo build --locked --release --manifest-path backend/Cargo.toml && node scripts/install-cli.cjs",
     "desktop:dev": "npm run build --prefix frontend && cargo build --locked --manifest-path backend/Cargo.toml && electron .",
     "desktop:build": "npm run build --prefix frontend && cargo build --locked --release --manifest-path backend/Cargo.toml && node desktop/prepare.cjs",
     "desktop:pack": "npm run desktop:build && electron-builder --config desktop/electron-builder.cjs --dir",
     "desktop:dist": "npm run desktop:build && electron-builder --config desktop/electron-builder.cjs",
+    "cli:test": "node --test scripts/tests/install-cli.test.cjs",
     "desktop:test": "node --test desktop/tests/*.test.cjs"
   },
   "devDependencies": {

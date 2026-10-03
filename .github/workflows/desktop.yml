@@ -21,6 +21,7 @@ jobs:
       - run: npm ci
       - run: npm ci --prefix frontend
       - run: npm ci --prefix agent
+      - run: npm run cli:test
       - run: npm run desktop:test
       - run: cargo test --locked --manifest-path backend/Cargo.toml
       - run: npm run desktop:build

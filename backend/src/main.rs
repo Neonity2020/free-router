@@ -1,4 +1,6 @@
 mod agent;
+mod cli;
+mod config;
 mod updates;
 use axum::{
     body::Body,
@@ -549,8 +551,12 @@ async fn chat_with_deadline(
 #[tokio::main]
 async fn main() {
     if env::var("FREE_ROUTER_DESKTOP").is_err() {
-        dotenvy::dotenv().ok();
-        dotenvy::from_filename("../.env").ok();
+        let paths = config::resolve();
+        dotenvy::from_path(paths.data_root.join(".env")).ok();
+        dotenvy::from_path(paths.root.join(".env")).ok();
+    }
+    if let Some(code) = cli::run().await {
+        std::process::exit(code);
     }
     let var = |name: &str, default: &str| env::var(name).unwrap_or_else(|_| default.to_owned());
     let mut providers = vec![
@@ -584,17 +590,13 @@ async fn main() {
     ];
     let preferred = var("DEFAULT_PROVIDER", "opencode");
     prioritize(&mut providers, &preferred);
-    let executable_root = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|p| p.to_path_buf()));
-    let root = env::var("FREE_ROUTER_RESOURCE_ROOT")
-        .map(PathBuf::from)
-        .ok()
-        .or(executable_root.filter(|p| p.join("frontend/dist").exists()))
-        .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(".."));
-    let settings_file = env::var("SETTINGS_FILE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| root.join("settings.local.json"));
+    let paths = config::resolve();
+    let _configuration_lock = paths.lock_for_server().unwrap_or_else(|message| {
+        eprintln!("错误：{message}");
+        std::process::exit(1);
+    });
+    let root = paths.root.clone();
+    let settings_file = paths.settings_file.clone();
     let mut exa_key = var("EXA_API_KEY", "");
     if settings_file.exists() {
         let saved: Value = serde_json::from_slice(
@@ -613,8 +615,8 @@ async fn main() {
             prioritize(&mut providers, preferred);
         }
     }
-    let data_root = settings_file.parent().unwrap_or(&root);
-    let gateway_key_file = data_root.join("gateway-key.local.txt");
+    let data_root = &paths.data_root;
+    let gateway_key_file = paths.gateway_key_file.clone();
     let saved_gateway_key = if gateway_key_file.exists() {
         std::fs::read_to_string(&gateway_key_file).expect("Cannot read gateway API key")
     } else {

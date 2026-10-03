@@ -4,7 +4,7 @@ Vite + React 前端，Rust / Axum 后端。通过统一的 OpenAI-compatible bas
 
 ## 启动
 
-需要 Node.js 22.19+ 和 最新版稳定 Rust。
+需要 Node.js 22.19+ 和 Rust 1.89+（推荐最新版稳定 Rust）。
 
 ```sh
 npm install --prefix frontend
@@ -60,9 +60,36 @@ Settings 支持每个上游最多 16 个 API Key，可逐个添加、删除或�
 
 可选环境配置参见 `.env.example`；Settings 保存值优先于环境配置（包括已清除的密钥）。默认仅监听 `127.0.0.1:8787`，适合本地使用。更改 `HOST` 可以开放监听；对外使用请配置网关密钥。`OPENROUTER_BASE_URL`、`OPENCODE_BASE_URL` 支持覆盖上游地址。请求体上限 10 MiB，连接超时 15 秒，模型调用总超时默认 300 秒（`GATEWAY_REQUEST_TIMEOUT_SECS` 可设为 1–86400 秒，修改后重启）。所有 Key 重试和上游切换共享同一时间预算，响应体与 SSE 也计入预算；预算耗尽后不再重试，响应头尚未发送时返回 504，已开始的响应则终止传输。统计随重启清零。
 
-当前实现 Chat Completions 和模型列表，未实现 Responses、Anthropic Messages 协议转换。也可以通过 .env 提供初始凭据。`SETTINGS_FILE` 可指定保存文件路径（父目录须存在）。`POST /api/settings` 需要 `X-Gateway-Settings: 1` 请求头，如果设置了 `GATEWAY_API_KEY`，还需 Bearer 鉴权。
+当前实现 Chat Completions 和模型列表，未实现 Responses、Anthropic Messages 协议转换。也可以通过 .env 提供初始凭据。`SETTINGS_FILE` 可指定保存文件路径（父目录会自动创建）。`POST /api/settings` 需要 `X-Gateway-Settings: 1` 请求头，如果设置了 `GATEWAY_API_KEY`，还需 Bearer 鉴权。
 
 官方接口参考：[OpenRouter Space Bunny](https://openrouter.ai/stealth/space-bunny-alpha)、[OpenCode Zen](https://opencode.ai/docs/en/zen/)。模型可用性与额度由上游控制。
+
+## 命令行
+
+同一个 `free-router` 二进制无参数时启动网关；传入子命令则在终端管理本地网关，适合无桌面或远程 SSH 环境。命令默认连接 `HOST`/`PORT`（默认 `http://127.0.0.1:8787`）上的运行实例，可写操作优先走管理接口、立即生效；只有目标网关无法连接时才进入离线模式，直接读写本地配置，启动后生效并在 stderr 提示。管理鉴权失败、请求超时或目标端口为其他服务时直接报错，不修改本地配置。网关在运行期间持有配置目录的进程锁；离线写入最多等待锁 5 秒，防止并发 CLI 丢失修改或覆盖运行中的配置。进程退出（包括异常终止）后锁自动释放。
+
+```sh
+free-router status                 # 运行状态、默认上游、各上游 Key 数量
+free-router status --json
+free-router keys list              # 列出各上游 Key 的不可逆 ID 与标签
+free-router keys add opencode sk-a sk-b    # 追加（重复自动忽略，每家上限 16 个）
+free-router keys remove opencode key_ab12cd    # 完整 ID 或唯一前缀
+free-router keys clear commandcode         # 清空某上游
+free-router provider               # 查看默认上游
+free-router provider openrouter    # 切换默认上游
+free-router gateway-key show       # 显示 /v1 使用的网关密钥
+free-router gateway-key generate   # 生成并保存新密钥（旧密钥立即失效）
+free-router config                 # 显示解析后的配置路径与网关地址
+free-router serve                  # 显式启动网关（等同无参数）
+```
+
+`status`、`keys list` 支持 `--json`，便于脚本消费。只显示不可逆 Key ID，不回显密钥；留空或未知上游会报错并列出可选值。离线读取与修改会继承尚未被本地配置覆盖的环境变量 Key；显式清空的 Key 池不会被环境变量恢复。写入使用独占随机临时文件、原子替换与 Unix 0600 权限。`gateway-key show` 在线时读取管理接口中的当前密钥，离线时才读取本地文件。
+
+想在任意目录直接调用，可注册为系统命令：`npm run cli:install` 会构建前端、安装 Agent 依赖并构建 release 二进制，将命令复制到 `~/.local/bin`，将前端与 Agent 资源复制到同级 `free-router-resources/`（可用 `FREE_ROUTER_BIN_DIR` 覆盖目标目录，非 Windows 平台命令权限为 755）。安装不复制配置或密钥；资源复制失败时保留旧安装。安装完成后可删除或移动源码目录，网关、Web UI 与 Agent 均从安装资源运行，Agent 仍需要 Node.js 22.19+。改完代码需重新安装。
+
+安装版默认配置目录为 macOS 的 `~/Library/Application Support/Free Router`、Linux 的 `$XDG_CONFIG_HOME/free-router`（默认 `~/.config/free-router`）、Windows 的 `%APPDATA%/Free Router`。开发版继续使用项目根目录，便携发布包继续使用包所在目录；`SETTINGS_FILE` 优先覆盖配置路径，`FREE_ROUTER_RESOURCE_ROOT` 可覆盖资源目录（未设 `SETTINGS_FILE` 时也作为配置默认目录）。可通过 `free-router config` 查看实际路径。安装前已有项目配置不会自动迁移，如需继续使用，可显式指定 `SETTINGS_FILE`，或在停止网关后将配置文件复制到安装版配置目录。
+
+`.env` 从配置目录和资源目录加载（配置目录优先），不会因切换工作目录而加载其他项目的 `.env`。`HOST`、`PORT`、`GATEWAY_API_KEY` 与显式环境变量仍可覆盖 `.env`。
 
 ## 验证
 
@@ -72,6 +99,8 @@ npm run build --prefix frontend
 cargo build --manifest-path backend/Cargo.toml
 python3 scripts/smoke_test.py
 python3 scripts/retry_timeout_test.py
+python3 scripts/cli_smoke_test.py
+npm run cli:test
 ```
 
 Smoke 测试使用本地模拟上游，不需要真实密钥，验证模型映射、自动切换、指定上游、鉴权、SSE、Settings 保存即时生效、重启恢复及清除。
