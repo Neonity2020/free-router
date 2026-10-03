@@ -206,6 +206,7 @@ function App() {
                 >
                   <option>space-bunny</option>
                   <option>openrouter/space-bunny</option>
+                  <option>openrouter/apodex/apodex-1.1-mini:free</option>
                   <option>opencode/space-bunny</option>
                   <option>commandcode/space-bunny</option>
                 </select>

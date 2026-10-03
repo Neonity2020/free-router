@@ -5,6 +5,7 @@ export const PI_SDK_VERSION = "0.99.2";
 export const GATEWAY_MODEL_IDS = [
   "space-bunny",
   "openrouter/space-bunny",
+  "openrouter/apodex/apodex-1.1-mini:free",
   "opencode/space-bunny",
   "commandcode/space-bunny",
 ] as const;

@@ -7,6 +7,7 @@ pub(crate) async fn models(State(app): State<Shared>, headers: HeaderMap) -> Res
     let data: Vec<_> = [
         "space-bunny",
         "openrouter/space-bunny",
+        "openrouter/apodex/apodex-1.1-mini:free",
         "opencode/space-bunny",
         "commandcode/space-bunny",
     ]
@@ -28,8 +29,18 @@ pub(crate) async fn models(State(app): State<Shared>, headers: HeaderMap) -> Res
 pub(crate) fn route(model: &str) -> Option<Option<&'static str>> {
     match model {
         "space-bunny" => Some(None),
-        "openrouter/space-bunny" | "stealth/space-bunny-alpha" => Some(Some("openrouter")),
+        "openrouter/space-bunny" | "openrouter/apodex/apodex-1.1-mini:free" | "stealth/space-bunny-alpha" => Some(Some("openrouter")),
         "opencode/space-bunny" | "space-bunny-free" => Some(Some("opencode")),
+        id if id.strip_prefix("openrouter/").is_some_and(|model| {
+            !model.is_empty()
+                && model.len() <= 512
+                && model
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"-._/:".contains(&b))
+        }) =>
+        {
+            Some(Some("openrouter"))
+        }
         id if id.strip_prefix("commandcode/").is_some_and(|model| {
             !model.is_empty()
                 && model.len() <= 200
@@ -155,6 +166,12 @@ async fn chat_with_deadline(
             {
                 requested_model
                     .strip_prefix("commandcode/")
+                    .unwrap_or(p.model)
+            } else if p.id == "openrouter"
+                && requested_model != "openrouter/space-bunny"
+            {
+                requested_model
+                    .strip_prefix("openrouter/")
                     .unwrap_or(p.model)
             } else {
                 p.model

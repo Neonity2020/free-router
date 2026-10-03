@@ -105,6 +105,7 @@ export default function Overview({ status, base, onSelectModel }: { status: Stat
                   ],
                   ["opencode/space-bunny", "OpenCode Zen", "space-bunny-free"],
                   ["commandcode/space-bunny", "Command Code", "stealth/space-bunny-alpha"],
+                  ["openrouter/apodex/apodex-1.1-mini:free", "OpenRouter", "apodex/apodex-1.1-mini:free"],
                 ].map(([id, name, desc], i) => (
                   <div className="route-row" key={id}>
                     <button

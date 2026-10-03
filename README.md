@@ -23,6 +23,7 @@ cargo run --manifest-path backend/Cargo.toml
 | --- | --- | --- |
 | `space-bunny` | 自动选择已配置上游，默认 OpenCode 优先 | 根据选中的上游映射 |
 | `openrouter/space-bunny` | 指定 OpenRouter | `stealth/space-bunny-alpha` |
+| `openrouter/apodex/apodex-1.1-mini:free` | 指定 OpenRouter | `apodex/apodex-1.1-mini:free` |
 | `opencode/space-bunny` | 指定 OpenCode Zen | `space-bunny-free` |
 | `commandcode/space-bunny` | 指定 Command Code | `stealth/space-bunny-alpha` |
 | `commandcode/<模型ID>` | 指定 Command Code 的其他 Chat Completions 模型 | 去掉 `commandcode/` 前缀，保留原模型 ID |
