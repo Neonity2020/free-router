@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -9,6 +10,11 @@ import { once } from 'node:events';
 import { streamGatewayReply, gatewayPiSnippet } from '../src/piGateway.ts';
 
 test('Pi SDK streams through the real Rust gateway', async (t) => {
+  // Fail fast with an actionable message: spawning a missing binary otherwise
+  // surfaces as an opaque native crash instead of a test assertion.
+  const root = resolve(import.meta.dirname, '../..');
+  const binary = resolve(root, 'backend/target/debug/free-router');
+  assert.ok(existsSync(binary), `Gateway binary not found: ${binary}\nBuild it first: cargo build --manifest-path backend/Cargo.toml`);
   const seen = [];
   const upstream = createServer(async (req, res) => {
     let body = '';
@@ -43,8 +49,7 @@ test('Pi SDK streams through the real Rust gateway', async (t) => {
   const port = finder.address().port;
   await new Promise(r => finder.close(r));
   const directory = await mkdtemp(resolve(tmpdir(), 'free-router-pi-'));
-  const root = resolve(import.meta.dirname, '../..');
-  const proc = spawn(resolve(root, 'backend/target/debug/free-router'), {
+  const proc = spawn(binary, {
     cwd: root, stdio: 'ignore', env: {
       ...process.env, GATEWAY_KEY_COOLDOWN_SECS: '0', HOST: '127.0.0.1', PORT: String(port),
       SETTINGS_FILE: resolve(directory, 'settings.json'),

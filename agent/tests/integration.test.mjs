@@ -3,12 +3,17 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
+import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 
 test('Web API executes the official Pi coding tools through the Rust gateway', async (t) => {
   const root = resolve(import.meta.dirname, '../..');
+  // Fail fast with an actionable message: spawning a missing binary otherwise
+  // surfaces as an opaque native crash instead of a test assertion.
+  const binary = resolve(root, 'backend/target/debug/free-router');
+  assert.ok(existsSync(binary), `Gateway binary not found: ${binary}\nBuild it first: cargo build --manifest-path backend/Cargo.toml`);
   const directory = await mkdtemp(resolve(tmpdir(), 'free-router-agent-'));
   const requests = [];
   const mock = createServer(async (req, res) => {
@@ -51,7 +56,7 @@ test('Web API executes the official Pi coding tools through the Rust gateway', a
   mock.listen(0, '127.0.0.1'); await once(mock, 'listening');
   const finder = createServer(); finder.listen(0, '127.0.0.1'); await once(finder, 'listening');
   const port = finder.address().port; await new Promise(r => finder.close(r));
-  const proc = spawn(resolve(root, 'backend/target/debug/free-router'), {
+  const proc = spawn(binary, {
     cwd: root, stdio: ['ignore', 'pipe', 'pipe'], env: {
       ...process.env, HOST: '127.0.0.1', PORT: String(port), PI_AGENT_WORKSPACE: directory,
       SETTINGS_FILE: resolve(directory, 'settings.json'), GATEWAY_API_KEY: 'mock-management',

@@ -93,16 +93,25 @@ free-router serve                  # 显式启动网关（等同无参数）
 
 ## 验证
 
+前端与 Agent 的集成测试会启动真实的 Rust 网关二进制，**必须先构建**，否则会以 Node 原生崩溃堆栈而非断言失败报错。
+
 ```sh
 cargo test --manifest-path backend/Cargo.toml
 npm run build --prefix frontend
 cargo build --manifest-path backend/Cargo.toml
+
+npm test --prefix frontend
+npm test --prefix agent
+npm run cli:test
+npm run desktop:test
+
 python3 scripts/smoke_test.py
 python3 scripts/retry_timeout_test.py
 python3 scripts/cooldown_test.py
 python3 scripts/cli_smoke_test.py
-npm run cli:test
 ```
+
+`npm test --prefix frontend` 与 `npm test --prefix agent` 依赖 `backend/target/debug/free-router`；缺失时会直接提示需要先执行 `cargo build`。
 
 Smoke 测试使用本地模拟上游，不需要真实密钥，验证模型映射、自动切换、指定上游、鉴权、SSE、Settings 保存即时生效、重启恢复及清除。
 
