@@ -38,6 +38,7 @@ jobs:
       - run: npm run build --prefix frontend
       - run: cargo test --locked --manifest-path backend/Cargo.toml
       - run: cargo build --locked --manifest-path backend/Cargo.toml
+      - run: python3 scripts/retry_timeout_test.py
       - run: npm test --prefix frontend
       - run: npm test --prefix agent
       - run: cargo build --locked --release --target ${{ matrix.target }} --manifest-path backend/Cargo.toml

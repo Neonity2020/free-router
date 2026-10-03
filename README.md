@@ -58,7 +58,7 @@ print(response.choices[0].message.content)
 
 Settings 支持每个上游最多 16 个 API Key，可逐个添加、删除或全部清除，并可调整上游优先级。新输入留空保留旧值，全部清除后即停用该上游。保存会立即生效，已开始的请求仍使用发起时配置。持久化失败时不会修改运行配置。
 
-可选环境配置参见 `.env.example`；Settings 保存值优先于环境配置（包括已清除的密钥）。默认仅监听 `127.0.0.1:8787`，适合本地使用。更改 `HOST` 可以开放监听；对外使用请配置网关密钥。`OPENROUTER_BASE_URL`、`OPENCODE_BASE_URL` 支持覆盖上游地址。请求体上限 10 MiB，连接超时 15 秒，整次请求超时 300 秒。统计随重启清零。
+可选环境配置参见 `.env.example`；Settings 保存值优先于环境配置（包括已清除的密钥）。默认仅监听 `127.0.0.1:8787`，适合本地使用。更改 `HOST` 可以开放监听；对外使用请配置网关密钥。`OPENROUTER_BASE_URL`、`OPENCODE_BASE_URL` 支持覆盖上游地址。请求体上限 10 MiB，连接超时 15 秒，模型调用总超时默认 300 秒（`GATEWAY_REQUEST_TIMEOUT_SECS` 可设为 1–86400 秒，修改后重启）。所有 Key 重试和上游切换共享同一时间预算，响应体与 SSE 也计入预算；预算耗尽后不再重试，响应头尚未发送时返回 504，已开始的响应则终止传输。统计随重启清零。
 
 当前实现 Chat Completions 和模型列表，未实现 Responses、Anthropic Messages 协议转换。也可以通过 .env 提供初始凭据。`SETTINGS_FILE` 可指定保存文件路径（父目录须存在）。`POST /api/settings` 需要 `X-Gateway-Settings: 1` 请求头，如果设置了 `GATEWAY_API_KEY`，还需 Bearer 鉴权。
 
@@ -71,6 +71,7 @@ cargo test --manifest-path backend/Cargo.toml
 npm run build --prefix frontend
 cargo build --manifest-path backend/Cargo.toml
 python3 scripts/smoke_test.py
+python3 scripts/retry_timeout_test.py
 ```
 
 Smoke 测试使用本地模拟上游，不需要真实密钥，验证模型映射、自动切换、指定上游、鉴权、SSE、Settings 保存即时生效、重启恢复及清除。

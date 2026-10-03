@@ -93,6 +93,7 @@ fn prioritize(providers: &mut [Provider], preferred: &str) {
 struct App {
     agent: agent::Bridge,
     client: reqwest::Client,
+    request_timeout: Duration,
     updater: Arc<updates::Updater>,
     providers: RwLock<Vec<Provider>>,
     exa_key: RwLock<String>,
@@ -409,10 +410,23 @@ fn normalize_space_bunny_request(body: &mut Value) {
     }
 }
 
-async fn chat(
-    State(app): State<Shared>,
+async fn chat(State(app): State<Shared>, headers: HeaderMap, Json(body): Json<Value>) -> Response {
+    let deadline = tokio::time::Instant::now() + app.request_timeout;
+    tokio::time::timeout_at(deadline, chat_with_deadline(app, headers, body, deadline))
+        .await
+        .unwrap_or_else(|_| {
+            error(
+                StatusCode::GATEWAY_TIMEOUT,
+                "Gateway request timeout exceeded",
+            )
+        })
+}
+
+async fn chat_with_deadline(
+    app: Shared,
     headers: HeaderMap,
-    Json(mut body): Json<Value>,
+    mut body: Value,
+    deadline: tokio::time::Instant,
 ) -> Response {
     if !api_authorized(&app, &headers).await {
         return error(StatusCode::UNAUTHORIZED, "Invalid gateway API key");
@@ -467,6 +481,13 @@ async fn chat(
         }
         let start = p.cursor.fetch_add(1, Ordering::Relaxed) as usize % p.keys.len();
         for offset in 0..p.keys.len() {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                return error(
+                    StatusCode::GATEWAY_TIMEOUT,
+                    "Gateway request timeout exceeded",
+                );
+            }
             if offset > 0 {
                 app.key_retries.fetch_add(1, Ordering::Relaxed);
             }
@@ -484,6 +505,8 @@ async fn chat(
                 .client
                 .post(format!("{}/chat/completions", p.base.trim_end_matches('/')))
                 .bearer_auth(&key.secret)
+                // The same budget covers retries and the eventual response body/SSE.
+                .timeout(remaining)
                 .json(&body)
                 .send()
                 .await;
@@ -618,6 +641,13 @@ async fn main() {
             ),
         ),
         updater,
+        request_timeout: Duration::from_secs(
+            var("GATEWAY_REQUEST_TIMEOUT_SECS", "300")
+                .parse::<u64>()
+                .ok()
+                .filter(|seconds| (1..=86400).contains(seconds))
+                .expect("GATEWAY_REQUEST_TIMEOUT_SECS must be an integer between 1 and 86400"),
+        ),
         gateway_key: RwLock::new(saved_gateway_key),
         gateway_key_file,
         client: reqwest::Client::builder()
