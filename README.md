@@ -99,6 +99,7 @@ npm run build --prefix frontend
 cargo build --manifest-path backend/Cargo.toml
 python3 scripts/smoke_test.py
 python3 scripts/retry_timeout_test.py
+python3 scripts/cooldown_test.py
 python3 scripts/cli_smoke_test.py
 npm run cli:test
 ```
@@ -135,9 +136,9 @@ Smoke 测试使用本地模拟上游，不需要真实密钥，验证模型映�
 
 ## Pi AI SDK
 
-已集成官方 `@earendil-works/pi-ai@0.99.2`（2026-10-01 核实的最新版本），使用当前 `createModels` / `createProvider` API。Playground 通过 Pi SDK 调用本地网关，支持流式回复、停止生成、思考内容与上游返回的 token 用量。上游未返回用量时不显示统计。上游 API Key 仍只由 Rust 后端读取；SDK 仅接收本地网关密钥，不持久化到浏览器。
+已集成官方 `@earendil-works/pi-ai@0.99.2`，使用当前 `createModels` / `createProvider` API。Playground 通过 Pi SDK 调用本地网关，支持流式回复、停止生成、思考内容与上游返回的 token 用量。上游未返回用量时不显示统计。上游 API Key 仍只由 Rust 后端读取；SDK 仅接收本地网关密钥，不持久化到浏览器。
 
-“开始调用”中选择 **Pi AI SDK**，可复制完整的 Node.js 示例，支持三个网关模型 ID。安装命令：`npm install @earendil-works/pi-ai@0.99.2`，通过 `GATEWAY_API_KEY` 环境变量传入 Settings 中生成的网关密钥。示例的上下文窗口 32768 和输出上限 4096 是保守的本地默认值，不代表上游真实限制；示例费用元数据为占位值，应用不显示费用估算。
+“开始调用”中选择 **Pi AI SDK**，可复制完整的 Node.js 示例，支持四个网关模型 ID。安装命令：`npm install @earendil-works/pi-ai@0.99.2`，通过 `GATEWAY_API_KEY` 环境变量传入 Settings 中生成的网关密钥。示例的上下文窗口 32768 和输出上限 4096 是保守的本地默认值，不代表上游真实限制；示例费用元数据为占位值，应用不显示费用估算。
 
 SDK 要求 Node.js 22.19+。仅按需加载 OpenAI Chat Completions 适配器。Rust 后端继续提供统一路由、Key 轮询和故障切换。
 
@@ -195,6 +196,12 @@ npm test --prefix agent
 
 测试用模拟模型驱动真实 SDK，在临时目录完成 `write → edit → bash → read`，验证对话、鉴权、并发拒绝、停止工具和删除会话。参考：[Pi Coding Agent SDK](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/sdk.md)。
 
-依赖审计：官方 SDK 0.99.2 的发布 shrinkwrap 固定了 `brace-expansion@5.0.9`，`npm audit` 当前报告一个高危拒绝服务漏洞；已验证 npm 的普通覆盖和 `audit fix` 未能替换这个嵌套锁定版本。尚未消除该依赖风险，保持本地使用并避免处理不可信的复杂 glob 输入。参考：[上游漏洞公告](https://github.com/advisories/GHSA-qhr7-859c-m2p7)。
+依赖审计：官方 SDK 0.99.2 的 shrinkwrap 固定了存在拒绝服务漏洞的 `brace-expansion@5.0.9`。Agent 直接锁定修复版本 `5.0.12`，安装脚本用 npm 校验完整性的包替换 SDK 内部副本；安全测试检查实际解析的版本，避免仅修改锁文件造成审计与运行版本不一致。安装 Agent 时请使用正常的 `npm ci --prefix agent`，确保执行安装脚本。参考：[上游漏洞公告](https://github.com/advisories/GHSA-q2hr-2g5m-vwhr)。
 
-Space Bunny 路由兼容 ZCode 自动发送的关闭思考参数：移除 `thinking: {type: "disabled"}`、`enable_thinking: false`、`reasoning_effort: "none"` 和 `reasoning: {effort: "none"}`，避免上游拒绝请求；显式开启思考的参数与其他 Command Code 模型保持透传。Settings 支持粘贴带 `Bearer` 前缀或首尾空白的 API Key，格式错误会提示上游与密钥序号，不回显密钥。
+推理参数：OpenRouter 和 OpenCode 的 Space Bunny 路由支持 `low`、`medium`、`high`、`xhigh`、`max` 五档推理；OpenRouter 声明默认 `max`。`minimal` 实测可接受，但不能据此认定为独立档位。这些路由不支持关闭推理：`reasoning_effort: "none"`、`reasoning.effort: "none"`、`reasoning.enabled: false`、`thinking.type: "disabled"` 或 `enable_thinking: false` 会返回明确的 400；自动路由会尝试能原样接收该参数的 Command Code。网关保留原始推理参数；Command Code 的等级能力尚未通过真实账号验证，不宣称支持特定档位。Pi Agent 默认开启 `high`，Playground 使用上游默认等级。Settings 支持粘贴带 `Bearer` 前缀或首尾空白的 API Key，格式错误提示上游与密钥序号，不回显密钥。
+
+失败 Key 冷却：401/403 默认暂停 300 秒；429 和 5xx 默认暂停 30 秒，有整数秒 `Retry-After` 时优先使用；连接失败暂停 5 秒。请求会跳过冷却中的 Key，继续尝试其他 Key 或自动路由的其他上游。全部 Key 冷却时返回 503 和最早可重试的 `Retry-After`，不会占用请求预算等待。保留同一 Key 的设置更新不会清除冷却状态；重启清空内存状态。`GATEWAY_KEY_COOLDOWN_SECS` 可统一覆盖为 0–86400 秒，0 关闭冷却，适合独立的重试测试。
+
+诊断：模型请求返回 `x-gateway-request-id`，stderr 输出 JSON 格式的上游尝试和请求完成记录，包含请求编号、上游、尝试序号、状态、耗时及流完成/中断/取消结果。记录不包含凭证、地址或请求/响应正文。`GATEWAY_LOG_REQUESTS=0` 可关闭记录。
+
+PR 和 main 分支推送会运行 `.github/workflows/ci.yml`：Rust 格式、Clippy、单元测试，前端构建，Agent 安全审计及运行版本检查，以及前端、CLI、桌面和本地网关集成测试。网关职责拆分到 `gateway`、`keys`、`reasoning`、`settings`、`diagnostics`；前端拆分概览、设置面板及设置状态，减少入口文件的维护负担。

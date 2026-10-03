@@ -61,9 +61,9 @@ async function createSession(body, key, exaKey) {
     id: 'free-router', name: 'Free Router', baseUrl,
     auth: { apiKey: envApiKeyAuth('Gateway key', []) }, api: openAICompletionsApi(),
     models: models.map(id => ({ id, name: id, provider: 'free-router', api: 'openai-completions',
-      baseUrl, reasoning: false, input: ['text'], contextWindow: 32768, maxTokens: 4096,
+      baseUrl, reasoning: true, input: ['text'], contextWindow: 32768, maxTokens: 4096,
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      compat: { supportsStore: false, supportsDeveloperRole: false, supportsReasoningEffort: false,
+      compat: { supportsStore: false, supportsDeveloperRole: false, supportsReasoningEffort: true,
         supportsUsageInStreaming: false, maxTokensField: 'max_tokens' },
     })),
   }));
@@ -79,7 +79,7 @@ async function createSession(body, key, exaKey) {
   await resourceLoader.reload();
   const searchConfig = { key: exaKey || '', baseUrl: process.env.PI_EXA_BASE_URL || 'https://api.exa.ai' };
   const { session } = await createAgentSession({ cwd, agentDir: cwd, modelRuntime: runtime,
-    model: runtime.getModel('free-router', body.model), thinkingLevel: 'off', resourceLoader,
+    model: runtime.getModel('free-router', body.model), thinkingLevel: 'high', resourceLoader,
     tools: ['read', 'write', 'edit', 'bash', 'grep', 'find', 'ls', 'web_search'], settingsManager,
     customTools: [createWebSearchTool(() => searchConfig)],
     sessionManager: SessionManager.inMemory(cwd),

@@ -111,11 +111,7 @@ impl Bridge {
             .ok_or("Pi Agent exited during startup")?;
         let ready: Value =
             serde_json::from_str(&line).map_err(|_| "Invalid Pi Agent startup response")?;
-        let port = ready["port"]
-            .as_u64()
-            .and_then(|p| u16::try_from(p).ok())
-            .filter(|p| *p != 0)
-            .ok_or("Invalid Pi Agent port")?;
+        let port = startup_port(&ready).ok_or("Invalid Pi Agent port")?;
         *running = Some(Running {
             child,
             _stdin: stdin,
@@ -171,15 +167,7 @@ pub async fn proxy(
         return choose_directory(&body, &app.agent.root).await;
     }
     let parts: Vec<_> = path.split('/').collect();
-    let valid = matches!(path, "status" | "sessions")
-        || (parts.first() == Some(&"sessions")
-            && (2..=3).contains(&parts.len())
-            && !parts[1].is_empty()
-            && parts[1]
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
-            && (parts.len() == 2 || matches!(parts[2], "prompt" | "abort")));
-    if !valid {
+    if !allowed_route(path, &parts) {
         return error(StatusCode::NOT_FOUND, "Unknown Agent route");
     }
     let port = match app.agent.port().await {
@@ -187,13 +175,7 @@ pub async fn proxy(
         Err(message) => return error(StatusCode::SERVICE_UNAVAILABLE, &message),
     };
     let gateway_key = app.gateway_key.read().await.clone();
-    let key = if !app.token.is_empty() {
-        &app.token
-    } else if !gateway_key.is_empty() {
-        &gateway_key
-    } else {
-        "local"
-    };
+    let key = agent_gateway_key(&app.token, &gateway_key);
     let response = match app
         .agent
         .client
@@ -229,6 +211,45 @@ pub async fn proxy(
     }
 }
 
+// The Agent forwards the key on every call, so rotating the gateway key takes effect immediately.
+// Management key wins because Agent routes already require it.
+fn agent_gateway_key<'a>(token: &'a str, gateway_key: &'a str) -> &'a str {
+    if !token.is_empty() {
+        token
+    } else if !gateway_key.is_empty() {
+        gateway_key
+    } else {
+        "local"
+    }
+}
+// The Agent service only accepts these routes; anything else never reaches Node.
+fn allowed_route(path: &str, parts: &[&str]) -> bool {
+    if matches!(path, "status" | "sessions") {
+        return true;
+    }
+    parts.first() == Some(&"sessions")
+        && (2..=3).contains(&parts.len())
+        && !parts[1].is_empty()
+        && parts[1]
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        && (parts.len() == 2 || matches!(parts[2], "prompt" | "abort"))
+}
+// The bridge token authenticates Rust against a loopback-only Agent process.
+fn startup_port(ready: &Value) -> Option<u16> {
+    ready["port"]
+        .as_u64()
+        .and_then(|p| u16::try_from(p).ok())
+        .filter(|p| *p != 0)
+}
+// osascript receives the directory as argv, so the fallback must be a real path.
+fn initial_directory(body: &[u8], root: &std::path::Path) -> PathBuf {
+    serde_json::from_slice::<Value>(body)
+        .ok()
+        .and_then(|value| value["cwd"].as_str().map(PathBuf::from))
+        .filter(|path| path.is_absolute() && path.is_dir())
+        .unwrap_or_else(|| root.to_path_buf())
+}
 async fn choose_directory(body: &[u8], root: &std::path::Path) -> Response {
     if !cfg!(target_os = "macos") {
         return error(
@@ -236,11 +257,7 @@ async fn choose_directory(body: &[u8], root: &std::path::Path) -> Response {
             "系统 Finder 选择目录仅支持 macOS，请手动输入路径",
         );
     }
-    let initial = serde_json::from_slice::<Value>(body)
-        .ok()
-        .and_then(|value| value["cwd"].as_str().map(PathBuf::from))
-        .filter(|path| path.is_absolute() && path.is_dir())
-        .unwrap_or_else(|| root.to_path_buf());
+    let initial = initial_directory(body, root);
     // Pass the directory as argv, never interpolate user paths into AppleScript.
     let script = r#"on run argv
       try
@@ -284,5 +301,283 @@ async fn choose_directory(body: &[u8], root: &std::path::Path) -> Response {
             StatusCode::SERVICE_UNAVAILABLE,
             "无法打开 Finder 文件夹选择窗口，请检查系统自动化权限或手动输入路径",
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{updates, App, RwLock};
+    use axum::{body::to_bytes, http::Uri};
+    use std::sync::atomic::AtomicU64;
+
+    fn app(root: PathBuf, token: &str, gateway_key: &str) -> Shared {
+        let settings_file = root.join("settings.local.json");
+        Shared::new(App {
+            agent: Bridge::new(root.clone(), "http://127.0.0.1:1/v1".into()),
+            client: reqwest::Client::new(),
+            request_timeout: Duration::from_secs(1),
+            updater: updates::Updater::new(
+                root.join("update-settings.local.json"),
+                root.join(".updates"),
+            ),
+            providers: RwLock::new(vec![]),
+            exa_key: RwLock::new(String::new()),
+            settings_file: settings_file.clone(),
+            token: token.into(),
+            gateway_key: RwLock::new(gateway_key.into()),
+            gateway_key_file: root.join("gateway-key.local.txt"),
+            requests: AtomicU64::new(0),
+            fallbacks: AtomicU64::new(0),
+            key_retries: AtomicU64::new(0),
+        })
+    }
+
+    async fn call(
+        app: Shared,
+        peer: &str,
+        path: &str,
+        method: Method,
+        headers: &[(&str, &str)],
+        body: &[u8],
+    ) -> (StatusCode, serde_json::Value) {
+        let mut headers = headers
+            .iter()
+            .map(|(name, value)| (name.parse().unwrap(), value.parse().unwrap()))
+            .collect::<HeaderMap>();
+        headers
+            .entry("x-gateway-settings")
+            .or_insert("1".parse().unwrap());
+        let response = proxy(
+            State(app),
+            ConnectInfo(peer.parse().unwrap()),
+            OriginalUri(path.parse::<Uri>().unwrap()),
+            method,
+            headers,
+            Bytes::copy_from_slice(body),
+        )
+        .await;
+        let status = response.status();
+        let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        (
+            status,
+            serde_json::from_slice(&bytes).unwrap_or(Value::Null),
+        )
+    }
+
+    #[test]
+    fn allowed_routes_match_the_node_service_surface() {
+        for path in [
+            "status",
+            "sessions",
+            "sessions/abc",
+            "sessions/abc/prompt",
+            "sessions/abc/abort",
+        ] {
+            let parts: Vec<_> = path.split('/').collect();
+            assert!(allowed_route(path, &parts), "{path} should be allowed");
+        }
+        for path in [
+            "",
+            "session",
+            "sessions/",
+            "sessions/abc/",
+            "sessions/abc/unknown",
+            "sessions/abc/prompt/extra",
+            "sessions/../etc",
+            "sessions/abc%2f",
+            "pick-directory/extra",
+            "internal",
+        ] {
+            let parts: Vec<_> = path.split('/').collect();
+            assert!(!allowed_route(path, &parts), "{path} should be rejected");
+        }
+    }
+
+    #[test]
+    fn session_ids_reject_path_traversal() {
+        let path = "sessions/../../etc/passwd";
+        let parts: Vec<_> = path.split('/').collect();
+        assert!(!allowed_route(path, &parts));
+    }
+
+    #[test]
+    fn startup_port_accepts_only_real_ports() {
+        assert_eq!(
+            startup_port(&serde_json::json!({"port": 41234})),
+            Some(41234)
+        );
+        assert_eq!(
+            startup_port(&serde_json::json!({"port": 65535})),
+            Some(65535)
+        );
+        assert_eq!(startup_port(&serde_json::json!({"port": 0})), None);
+        assert_eq!(startup_port(&serde_json::json!({"port": 65536})), None);
+        assert_eq!(startup_port(&serde_json::json!({"port": -1})), None);
+        assert_eq!(startup_port(&serde_json::json!({"port": "41234"})), None);
+        assert_eq!(startup_port(&serde_json::json!({"port": 41234.5})), None);
+        assert_eq!(startup_port(&serde_json::json!({"port": null})), None);
+        assert_eq!(startup_port(&serde_json::json!({})), None);
+    }
+
+    #[test]
+    fn bridge_token_is_random_hex_per_bridge() {
+        let first = Bridge::new(PathBuf::from("/tmp"), "http://127.0.0.1:1/v1".into());
+        let second = Bridge::new(PathBuf::from("/tmp"), "http://127.0.0.1:1/v1".into());
+        assert_eq!(first.token.len(), 64);
+        assert!(first.token.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_ne!(first.token, second.token);
+    }
+
+    #[test]
+    fn agent_prefers_management_key_then_gateway_key() {
+        assert_eq!(agent_gateway_key("management", "gateway"), "management");
+        assert_eq!(agent_gateway_key("", "gateway"), "gateway");
+        assert_eq!(agent_gateway_key("", ""), "local");
+    }
+
+    #[test]
+    fn initial_directory_falls_back_to_root_for_unusable_input() {
+        let root = PathBuf::from("/tmp");
+        assert_eq!(initial_directory(b"{}", &root), root);
+        assert_eq!(initial_directory(b"not json", &root), root);
+        assert_eq!(
+            initial_directory(br#"{"cwd":"relative/path"}"#, &root),
+            root
+        );
+        assert_eq!(
+            initial_directory(br#"{"cwd":"/does/not/exist"}"#, &root),
+            root
+        );
+        assert_eq!(initial_directory(br#"{"cwd":123}"#, &root), root);
+        assert_eq!(
+            initial_directory(br#"{"cwd":"/tmp"}"#, &root),
+            PathBuf::from("/tmp")
+        );
+    }
+
+    #[tokio::test]
+    async fn remote_access_without_management_key_is_refused() {
+        let app = app(PathBuf::from("/tmp"), "", "");
+        let (status, body) = call(
+            app,
+            "203.0.113.7:1234",
+            "/api/agent/sessions",
+            Method::GET,
+            &[],
+            b"",
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("GATEWAY_API_KEY"));
+    }
+
+    #[tokio::test]
+    async fn wrong_management_key_is_unauthorized() {
+        let app = app(PathBuf::from("/tmp"), "management-token", "");
+        let (status, body) = call(
+            app,
+            "127.0.0.1:1234",
+            "/api/agent/sessions",
+            Method::GET,
+            &[("authorization", "Bearer wrong")],
+            b"",
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert!(body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("management key"));
+    }
+
+    #[tokio::test]
+    async fn settings_header_is_required() {
+        let app = app(PathBuf::from("/tmp"), "management-token", "");
+        let response = proxy(
+            State(app.clone()),
+            ConnectInfo("127.0.0.1:1234".parse().unwrap()),
+            OriginalUri("/api/agent/sessions".parse::<Uri>().unwrap()),
+            Method::GET,
+            HeaderMap::from_iter([(
+                "authorization".parse().unwrap(),
+                "Bearer management-token".parse().unwrap(),
+            )]),
+            Bytes::new(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+        let bytes = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        assert!(body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("X-Gateway-Settings"));
+    }
+
+    #[tokio::test]
+    async fn unknown_routes_are_rejected_before_reaching_the_agent() {
+        let app = app(PathBuf::from("/tmp"), "", "");
+        for path in ["/api/agent/internal", "/api/agent/sessions/../secrets"] {
+            let (status, _) =
+                call(app.clone(), "127.0.0.1:1234", path, Method::GET, &[], b"").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn pick_directory_requires_post_and_loopback() {
+        let app = app(PathBuf::from("/tmp"), "", "");
+        let (status, body) = call(
+            app.clone(),
+            "127.0.0.1:1234",
+            "/api/agent/pick-directory",
+            Method::GET,
+            &[],
+            b"",
+        )
+        .await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED);
+        assert!(body["error"]["message"].as_str().unwrap().contains("POST"));
+    }
+
+    #[tokio::test]
+    async fn pick_directory_is_refused_for_remote_peers() {
+        // A configured management key clears the first gate, so the folder
+        // picker loopback check is the one that has to reject this request.
+        let app = app(PathBuf::from("/tmp"), "management-token", "");
+        let (status, body) = call(
+            app.clone(),
+            "203.0.113.7:1234",
+            "/api/agent/pick-directory",
+            Method::POST,
+            &[("authorization", "Bearer management-token")],
+            b"{}",
+        )
+        .await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(body["error"]["message"].as_str().unwrap().contains("本机"));
+    }
+
+    #[tokio::test]
+    async fn missing_agent_dependencies_report_a_setup_hint() {
+        let app = app(PathBuf::from("/nonexistent-root"), "", "");
+        let (status, body) = call(
+            app,
+            "127.0.0.1:1234",
+            "/api/agent/status",
+            Method::GET,
+            &[],
+            b"",
+        )
+        .await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("npm ci --prefix agent"));
     }
 }

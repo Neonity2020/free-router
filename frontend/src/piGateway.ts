@@ -23,11 +23,11 @@ models.setProvider(createProvider({
     id: ${JSON.stringify(modelId)}, name: 'Space Bunny',
     api: 'openai-completions', provider: 'free-router',
     baseUrl: ${JSON.stringify(baseUrl)},
-    reasoning: false, input: ['text'],
+    reasoning: true, input: ['text'],
     contextWindow: 32768, maxTokens: 4096,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     compat: { supportsStore: false, supportsUsageInStreaming: false,
-      supportsDeveloperRole: false, supportsReasoningEffort: false,
+      supportsDeveloperRole: false, supportsReasoningEffort: true,
       maxTokensField: 'max_tokens' },
   }],
 }));
@@ -50,7 +50,7 @@ export function createGatewayModels(baseUrl: string) {
     api: "openai-completions",
     provider: "free-router",
     baseUrl,
-    reasoning: false,
+    reasoning: true,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     // Conservative local defaults, not an assertion about upstream limits.
@@ -59,7 +59,7 @@ export function createGatewayModels(baseUrl: string) {
     compat: {
       supportsStore: false,
       supportsDeveloperRole: false,
-      supportsReasoningEffort: false,
+      supportsReasoningEffort: true,
       supportsUsageInStreaming: false,
       maxTokensField: "max_tokens",
     },

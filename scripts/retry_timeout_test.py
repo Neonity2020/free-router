@@ -55,7 +55,7 @@ with tempfile.TemporaryDirectory() as directory:
     settings = Path(directory) / 'settings.json'
     settings.write_text(json.dumps({'opencode': ['a', 'b', 'c', 'd'], 'openrouter': ['e'], 'default_provider': 'opencode'}))
     env = dict(os.environ, SETTINGS_FILE=str(settings), HOST='127.0.0.1', PORT=str(port),
-               GATEWAY_API_KEY='test-local', GATEWAY_REQUEST_TIMEOUT_SECS='1',
+               GATEWAY_API_KEY='test-local', GATEWAY_KEY_COOLDOWN_SECS='0', GATEWAY_REQUEST_TIMEOUT_SECS='1',
                OPENCODE_API_KEY='', OPENROUTER_API_KEY='', COMMANDCODE_API_KEY='',
                OPENCODE_BASE_URL=f'http://127.0.0.1:{servers[0].server_port}/v1',
                OPENROUTER_BASE_URL=f'http://127.0.0.1:{servers[1].server_port}/v1')

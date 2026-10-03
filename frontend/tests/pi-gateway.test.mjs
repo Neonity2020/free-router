@@ -46,7 +46,7 @@ test('Pi SDK streams through the real Rust gateway', async (t) => {
   const root = resolve(import.meta.dirname, '../..');
   const proc = spawn(resolve(root, 'backend/target/debug/free-router'), {
     cwd: root, stdio: 'ignore', env: {
-      ...process.env, HOST: '127.0.0.1', PORT: String(port),
+      ...process.env, GATEWAY_KEY_COOLDOWN_SECS: '0', HOST: '127.0.0.1', PORT: String(port),
       SETTINGS_FILE: resolve(directory, 'settings.json'),
       GATEWAY_API_KEY: 'mock-gateway', DEFAULT_PROVIDER: 'opencode',
       OPENROUTER_API_KEY: 'mock-router', OPENCODE_API_KEY: 'mock-zen',
@@ -71,7 +71,7 @@ test('Pi SDK streams through the real Rust gateway', async (t) => {
   assert.ok(ready, 'gateway must start');
   const probe = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer mock-gateway' },
-    body: JSON.stringify({ model: 'space-bunny', messages: [{ role: 'user', content: 'hi' }], stream: true,
+    body: JSON.stringify({ model: 'commandcode/space-bunny', messages: [{ role: 'user', content: 'hi' }], stream: true,
       max_completion_tokens: 1, thinking: { type: 'disabled' }, enable_thinking: false,
       reasoning_effort: 'none', reasoning: { effort: 'none' } }),
   });
@@ -79,7 +79,7 @@ test('Pi SDK streams through the real Rust gateway', async (t) => {
   await probe.text();
   assert.equal(seen.at(-1).data.max_completion_tokens, 1);
   for (const hint of ['thinking', 'enable_thinking', 'reasoning_effort', 'reasoning']) {
-    assert.ok(!(hint in seen.at(-1).data));
+    assert.ok(hint in seen.at(-1).data);
   }
   seen.length = 0;
   const call = (overrides = {}) => streamGatewayReply({
@@ -109,7 +109,7 @@ test('Pi SDK streams through the real Rust gateway', async (t) => {
     signal: controller.signal, onText: () => controller.abort() });
   assert.equal(cancelled.stopReason, 'aborted');
   const example = spawn(process.execPath, ['--input-type=module', '-e', gatewayPiSnippet(baseUrl, 'openrouter/space-bunny')], {
-    cwd: resolve(root, 'frontend'), env: { ...process.env, GATEWAY_API_KEY: 'mock-gateway' },
+    cwd: resolve(root, 'frontend'), env: { ...process.env, GATEWAY_KEY_COOLDOWN_SECS: '0', GATEWAY_API_KEY: 'mock-gateway' },
   });
   let output = '', errors = '';
   example.stdout.on('data', chunk => output += chunk);

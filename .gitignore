@@ -22,3 +22,5 @@ desktop/runtime/
 desktop/dist/
 
 .free-router.lock
+
+.commandcode/

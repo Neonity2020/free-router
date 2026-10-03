@@ -51,7 +51,7 @@ with socket.socket() as s:
     port = s.getsockname()[1]
 settings_dir = tempfile.TemporaryDirectory()
 settings_file = Path(settings_dir.name) / "settings.json"
-env = dict(os.environ, SETTINGS_FILE=str(settings_file), PORT=str(port), HOST='127.0.0.1', GATEWAY_API_KEY='test-local', DEFAULT_PROVIDER='opencode', OPENCODE_API_KEY='mock-zen', OPENROUTER_API_KEY='mock-router', OPENCODE_BASE_URL=f'http://127.0.0.1:{servers[0].server_port}/v1', OPENROUTER_BASE_URL=f'http://127.0.0.1:{servers[1].server_port}/v1')
+env = dict(os.environ, SETTINGS_FILE=str(settings_file), PORT=str(port), HOST='127.0.0.1', GATEWAY_API_KEY='test-local', GATEWAY_KEY_COOLDOWN_SECS='0', DEFAULT_PROVIDER='opencode', OPENCODE_API_KEY='mock-zen', OPENROUTER_API_KEY='mock-router', OPENCODE_BASE_URL=f'http://127.0.0.1:{servers[0].server_port}/v1', OPENROUTER_BASE_URL=f'http://127.0.0.1:{servers[1].server_port}/v1')
 env.update(COMMANDCODE_API_KEY='', COMMANDCODE_BASE_URL=f'http://127.0.0.1:{servers[2].server_port}/provider/v1')
 proc = subprocess.Popen([str(ROOT / 'backend/target/debug/free-router')], cwd=ROOT, env=env, stdout=subprocess.DEVNULL)
 try:
