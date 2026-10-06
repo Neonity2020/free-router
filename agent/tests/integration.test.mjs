@@ -29,7 +29,9 @@ test('Web API executes the official Pi coding tools through the Rust gateway', a
     }
     const body = JSON.parse(raw); requests.push(body);
     assert.equal(req.headers.authorization, 'Bearer mock-upstream');
-    assert.equal(body.model, 'stealth/space-bunny-alpha');
+    // Command Code still maps its Space Bunny alias; the OpenRouter route now
+    // forwards the replacement model id verbatim.
+    assert.ok(['stealth/space-bunny-alpha', 'nvidia/nemotron-3-ultra-550b-a55b:free'].includes(body.model), body.model);
     const cancel = body.messages.some(m => m.role === 'user' && m.content === 'cancel');
     const step = body.messages.filter(m => m.role === 'tool').length;
     const actions = [
@@ -140,7 +142,7 @@ test('Web API executes the official Pi coding tools through the Rust gateway', a
   const cleared = JSON.parse(await readFile(resolve(directory, 'settings.json'), 'utf8'));
   assert.equal(cleared.exa, '');
   assert.deepEqual(cleared.openrouter, ['mock-upstream']);
-  const second = (await api('sessions', 'POST', { cwd: directory, model: 'openrouter/space-bunny' })).data;
+  const second = (await api('sessions', 'POST', { cwd: directory, model: 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free' })).data;
   await api(`sessions/${second.id}/prompt`, 'POST', { prompt: 'cancel' });
   for (let i = 0; i < 100; i++) {
     const snapshot = (await api(`sessions/${second.id}`)).data;

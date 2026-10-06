@@ -4,7 +4,7 @@ import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completio
 export const PI_SDK_VERSION = "0.99.2";
 export const GATEWAY_MODEL_IDS = [
   "space-bunny",
-  "openrouter/space-bunny",
+  "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
   "openrouter/apodex/apodex-1.1-mini:free",
   "opencode/space-bunny",
   "commandcode/space-bunny",
@@ -21,7 +21,7 @@ models.setProvider(createProvider({
   auth: { apiKey: { name: 'Gateway key', resolve: async () => ({ auth: {} }) } },
   api: openAICompletionsApi(),
   models: [{
-    id: ${JSON.stringify(modelId)}, name: 'Space Bunny',
+    id: ${JSON.stringify(modelId)}, name: ${JSON.stringify(modelId)},
     api: 'openai-completions', provider: 'free-router',
     baseUrl: ${JSON.stringify(baseUrl)},
     reasoning: true, input: ['text'],

@@ -466,7 +466,9 @@ async fn status(json_output: bool) -> Result<(), String> {
         .get("default_provider")
         .and_then(Value::as_str)
         .map(str::to_owned)
-        .unwrap_or_else(|| env::var("DEFAULT_PROVIDER").unwrap_or_else(|_| "opencode".to_owned()));
+        .unwrap_or_else(|| {
+            env::var("DEFAULT_PROVIDER").unwrap_or_else(|_| "openrouter".to_owned())
+        });
     if json_output {
         println!(
             "{}",
@@ -632,7 +634,7 @@ async fn provider(id: Option<String>) -> Result<(), String> {
         println!(
             "{}",
             current.unwrap_or_else(
-                || env::var("DEFAULT_PROVIDER").unwrap_or_else(|_| "opencode".to_owned())
+                || env::var("DEFAULT_PROVIDER").unwrap_or_else(|_| "openrouter".to_owned())
             )
         );
         return Ok(());

@@ -89,7 +89,7 @@ export default function Overview({ status, base, onSelectModel }: { status: Stat
               </div>
               <div className="section-title">
                 <h3>模型路由</h3>
-                <span>01 AUTOMATIC · 03 DIRECT</span>
+                <span>01 AUTOMATIC · 04 DIRECT</span>
               </div>
               <div className="routes">
                 {[
@@ -99,9 +99,9 @@ export default function Overview({ status, base, onSelectModel }: { status: Stat
                     "按优先顺序选择已配置上游，连接失败、429 或 5xx 时切换。",
                   ],
                   [
-                    "openrouter/space-bunny",
+                    "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
                     "OpenRouter",
-                    "stealth/space-bunny-alpha",
+                    "nvidia/nemotron-3-ultra-550b-a55b:free",
                   ],
                   ["opencode/space-bunny", "OpenCode Zen", "space-bunny-free"],
                   ["commandcode/space-bunny", "Command Code", "stealth/space-bunny-alpha"],

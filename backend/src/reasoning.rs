@@ -1,9 +1,10 @@
 use serde_json::{json, Value};
 
-// Only OpenRouter and OpenCode Space Bunny have verified mandatory reasoning.
-// Unknown providers retain the caller's parameters unchanged.
+// Only the OpenCode Zen Space Bunny model has verified mandatory reasoning.
+// Every other route retains the caller's parameters unchanged, so the models
+// that advertise optional reasoning (OpenRouter's current pool) can disable it.
 pub fn compatible(provider: &str, body: &Value) -> bool {
-    if !matches!(provider, "openrouter" | "opencode") {
+    if provider != "opencode" {
         return true;
     }
     !(body.get("reasoning_effort") == Some(&json!("none"))
@@ -30,7 +31,7 @@ mod tests {
             json!({"enable_thinking":false}),
             json!({"reasoning":{"enabled":false}}),
         ] {
-            assert!(!compatible("openrouter", &body));
+            assert!(compatible("openrouter", &body));
             assert!(!compatible("opencode", &body));
             assert!(compatible("commandcode", &body));
         }

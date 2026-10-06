@@ -202,7 +202,7 @@ async fn main() {
             keys: parse_keys(&json!(var("OPENROUTER_API_KEY", "")))
                 .expect("Invalid OPENROUTER_API_KEY"),
             cursor: Arc::new(AtomicU64::new(0)),
-            model: "stealth/space-bunny-alpha",
+            model: "nvidia/nemotron-3-ultra-550b-a55b:free",
         },
         Provider {
             id: "commandcode",
@@ -216,7 +216,7 @@ async fn main() {
             model: "stealth/space-bunny-alpha",
         },
     ];
-    let preferred = var("DEFAULT_PROVIDER", "opencode");
+    let preferred = var("DEFAULT_PROVIDER", "openrouter");
     prioritize(&mut providers, &preferred);
     let paths = config::resolve();
     let _configuration_lock = paths.lock_for_server().unwrap_or_else(|message| {
@@ -358,7 +358,10 @@ mod tests {
     #[test]
     fn model_routes() {
         assert_eq!(route("space-bunny"), Some(None));
-        assert_eq!(route("stealth/space-bunny-alpha"), Some(Some("openrouter")));
+        assert_eq!(
+            route("openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"),
+            Some(Some("openrouter"))
+        );
         assert_eq!(route("space-bunny-free"), Some(Some("opencode")));
         assert_eq!(route("commandcode/space-bunny"), Some(Some("commandcode")));
         assert_eq!(

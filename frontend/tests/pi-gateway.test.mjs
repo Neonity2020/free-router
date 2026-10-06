@@ -98,22 +98,22 @@ test('Pi SDK streams through the real Rust gateway', async (t) => {
   assert.equal(deltas.at(-1), '你好，世界');
   assert.equal(message.usage.totalTokens, 9);
   assert.equal(thinking.at(-1), '思考示例');
-  assert.deepEqual(seen.map(r => r.data.model), ['space-bunny-free', 'stealth/space-bunny-alpha']);
+  assert.deepEqual(seen.map(r => r.data.model), ['space-bunny-free', 'nvidia/nemotron-3-ultra-550b-a55b:free']);
   assert.deepEqual(seen.map(r => r.key), ['Bearer mock-zen', 'Bearer mock-router']);
   assert.ok(seen.every(r => r.data.stream === true && r.data.max_tokens === 4096));
-  await call({ modelId: 'openrouter/space-bunny' });
+  await call({ modelId: 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free' });
   await call({ modelId: 'commandcode/space-bunny' });
   assert.equal(seen.at(-1).key, 'Bearer mock-command');
   assert.equal(seen.at(-1).data.model, 'stealth/space-bunny-alpha');
-  assert.equal((await call({ modelId: 'openrouter/space-bunny', prompt: 'length' })).stopReason, 'length');
+  assert.equal((await call({ modelId: 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free', prompt: 'length' })).stopReason, 'length');
   await assert.rejects(call({ modelId: 'opencode/space-bunny' }), /mock rate limit/);
   await assert.rejects(call({ apiKey: 'wrong-key' }), /401|[Uu]nauthorized|[Ii]nvalid/);
   await assert.rejects(call({ modelId: 'unknown' }), /未知/);
   const controller = new AbortController();
-  const cancelled = await call({ modelId: 'openrouter/space-bunny', prompt: 'cancel',
+  const cancelled = await call({ modelId: 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free', prompt: 'cancel',
     signal: controller.signal, onText: () => controller.abort() });
   assert.equal(cancelled.stopReason, 'aborted');
-  const example = spawn(process.execPath, ['--input-type=module', '-e', gatewayPiSnippet(baseUrl, 'openrouter/space-bunny')], {
+  const example = spawn(process.execPath, ['--input-type=module', '-e', gatewayPiSnippet(baseUrl, 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')], {
     cwd: resolve(root, 'frontend'), env: { ...process.env, GATEWAY_KEY_COOLDOWN_SECS: '0', GATEWAY_API_KEY: 'mock-gateway' },
   });
   let output = '', errors = '';

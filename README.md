@@ -1,6 +1,6 @@
 # Free Router
 
-Vite + React 前端，Rust / Axum 后端。通过统一的 OpenAI-compatible baseURL 调用 OpenRouter、OpenCode Zen 和 Command Code 的 Space Bunny。
+Vite + React 前端，Rust / Axum 后端。通过统一的 OpenAI-compatible baseURL 调用 OpenRouter、OpenCode Zen 和 Command Code 上的模型，并在失效时切换到其他上游。
 
 ## 启动
 
@@ -21,8 +21,8 @@ cargo run --manifest-path backend/Cargo.toml
 
 | 对外模型 ID | 行为 | 上游模型 |
 | --- | --- | --- |
-| `space-bunny` | 自动选择已配置上游，默认 OpenCode 优先 | 根据选中的上游映射 |
-| `openrouter/space-bunny` | 指定 OpenRouter | `stealth/space-bunny-alpha` |
+| `space-bunny` | 自动选择已配置上游，默认 OpenRouter 优先 | 按选中的上游映射，见下方说明 |
+| `openrouter/nvidia/nemotron-3-ultra-550b-a55b:free` | 指定 OpenRouter | `nvidia/nemotron-3-ultra-550b-a55b:free` |
 | `openrouter/apodex/apodex-1.1-mini:free` | 指定 OpenRouter | `apodex/apodex-1.1-mini:free` |
 | `opencode/space-bunny` | 指定 OpenCode Zen | `space-bunny-free` |
 | `commandcode/space-bunny` | 指定 Command Code | `stealth/space-bunny-alpha` |
@@ -30,7 +30,7 @@ cargo run --manifest-path backend/Cargo.toml
 
 Command Code 密钥在 Settings 中填写，支持最多 16 个 Key 的轮询、添加和删除，也可设为自动路由优先上游。默认 Provider API baseURL 为 `https://api.commandcode.ai/provider/v1`，可用 `COMMANDCODE_BASE_URL` 覆盖；环境变量密钥为 `COMMANDCODE_API_KEY`。未配置 Command Code 时不参与自动路由。除 Space Bunny 别名外，例如 `commandcode/deepseek/deepseek-v4-flash` 会原样转发 `deepseek/deepseek-v4-flash`，可用模型以官方目录为准。本网关当前提供 Chat Completions，不将 Claude 的 Anthropic Messages 或 Responses 协议转换为聊天接口。参考：[Command Code Provider API](https://commandcode.ai/docs/provider)、[Studio API Key](https://commandcode.ai/studio/)。
 
-也支持上游原始 ID `stealth/space-bunny-alpha` 与 `space-bunny-free`。在 Settings 页面选择优先上游即可改变自动路由顺序。连接失败、HTTP 429 或 5xx 在响应头返回前触发故障切换。已开始输出的流不会重试，避免重复内容。401/403、429、5xx 或连接失败时按轮询顺序尝试池内其他 Key，每个 Key 最多尝试一次；池内耗尽后自动路由可切换上游。400 等其他错误直接返回。上游响应体、工具调用、多模态参数和 SSE 按原协议透传；响应模型名保留上游原始 ID。`x-gateway-provider` 响应头指示实际使用的上游。
+`space-bunny` 别名在各上游的映射：OpenRouter → `nvidia/nemotron-3-ultra-550b-a55b:free`（默认优先），OpenCode Zen → `space-bunny-free`，Command Code → `stealth/space-bunny-alpha`。原来的 `stealth/space-bunny-alpha` 已从 OpenRouter 下架，因此 OpenRouter 不再提供 Space Bunny；`openrouter/<模型ID>` 会原样转发上游模型 ID。也支持上游原始 ID `space-bunny-free`。在 Settings 页面选择优先上游即可改变自动路由顺序（默认 `openrouter`）。连接失败、HTTP 429 或 5xx 在响应头返回前触发故障切换。已开始输出的流不会重试，避免重复内容。401/403、429、5xx 或连接失败时按轮询顺序尝试池内其他 Key，每个 Key 最多尝试一次；池内耗尽后自动路由可切换上游。上游把失败包进 200 响应体时（OpenRouter 的 `provider_overloaded` 就是这种形态，JSON 与 SSE 两种），网关会在响应头发出前识别并按同样规则切换：非流式先读完 JSON 响应体，流式先预读首个 SSE 事件（因此流式响应头会等到首个事件到达），确实没有可选上游时才原样透传。400 等其他错误直接返回。上游响应体、工具调用、多模态参数和 SSE 按原协议透传；响应模型名保留上游原始 ID。`x-gateway-provider` 响应头指示实际使用的上游。
 
 ## 调用
 
@@ -63,7 +63,7 @@ Settings 支持每个上游最多 16 个 API Key，可逐个添加、删除或�
 
 当前实现 Chat Completions 和模型列表，未实现 Responses、Anthropic Messages 协议转换。也可以通过 .env 提供初始凭据。`SETTINGS_FILE` 可指定保存文件路径（父目录会自动创建）。`POST /api/settings` 需要 `X-Gateway-Settings: 1` 请求头，如果设置了 `GATEWAY_API_KEY`，还需 Bearer 鉴权。
 
-官方接口参考：[OpenRouter Space Bunny](https://openrouter.ai/stealth/space-bunny-alpha)、[OpenCode Zen](https://opencode.ai/docs/en/zen/)。模型可用性与额度由上游控制。
+官方接口参考：[OpenRouter Nemotron 3 Ultra](https://openrouter.ai/nvidia/nemotron-3-ultra-550b-a55b:free)、[OpenCode Zen](https://opencode.ai/docs/en/zen/)。模型可用性与额度由上游控制。
 
 ## 命令行
 
@@ -208,7 +208,7 @@ npm test --prefix agent
 
 依赖审计：官方 SDK 0.99.2 的 shrinkwrap 固定了存在拒绝服务漏洞的 `brace-expansion@5.0.9`。Agent 直接锁定修复版本 `5.0.12`，安装脚本用 npm 校验完整性的包替换 SDK 内部副本；安全测试检查实际解析的版本，避免仅修改锁文件造成审计与运行版本不一致。安装 Agent 时请使用正常的 `npm ci --prefix agent`，确保执行安装脚本。参考：[上游漏洞公告](https://github.com/advisories/GHSA-q2hr-2g5m-vwhr)。
 
-推理参数：OpenRouter 和 OpenCode 的 Space Bunny 路由支持 `low`、`medium`、`high`、`xhigh`、`max` 五档推理；OpenRouter 声明默认 `max`。`minimal` 实测可接受，但不能据此认定为独立档位。这些路由不支持关闭推理：`reasoning_effort: "none"`、`reasoning.effort: "none"`、`reasoning.enabled: false`、`thinking.type: "disabled"` 或 `enable_thinking: false` 会返回明确的 400；自动路由会尝试能原样接收该参数的 Command Code。网关保留原始推理参数；Command Code 的等级能力尚未通过真实账号验证，不宣称支持特定档位。Pi Agent 默认开启 `high`，Playground 使用上游默认等级。Settings 支持粘贴带 `Bearer` 前缀或首尾空白的 API Key，格式错误提示上游与密钥序号，不回显密钥。
+推理参数：OpenCode Zen 的 Space Bunny 路由支持 `low`、`medium`、`high`、`xhigh`、`max` 五档推理，`minimal` 实测可接受，但不能据此认定为独立档位。OpenRouter 默认模型 `nvidia/nemotron-3-ultra-550b-a55b:free` 的上游声明是推理可选、只提供 `high` 与 `medium` 两档、默认 `high`，`/v1/models` 按上游声明上报。只有 OpenCode Zen 的 Space Bunny 路由不支持关闭推理：`reasoning_effort: "none"`、`reasoning.effort: "none"`、`reasoning.enabled: false`、`thinking.type: "disabled"` 或 `enable_thinking: false` 会返回明确的 400；其他路由保留原始参数，由上游决定是否接受，自动路由也会尝试下一个上游。Command Code 的等级能力尚未通过真实账号验证，不宣称支持特定档位。Pi Agent 默认开启 `high`，Playground 使用上游默认等级。Settings 支持粘贴带 `Bearer` 前缀或首尾空白的 API Key，格式错误提示上游与密钥序号，不回显密钥。
 
 失败 Key 冷却：401/403 默认暂停 300 秒；429 和 5xx 默认暂停 30 秒，有整数秒 `Retry-After` 时优先使用；连接失败暂停 5 秒。请求会跳过冷却中的 Key，继续尝试其他 Key 或自动路由的其他上游。全部 Key 冷却时返回 503 和最早可重试的 `Retry-After`，不会占用请求预算等待。保留同一 Key 的设置更新不会清除冷却状态；重启清空内存状态。`GATEWAY_KEY_COOLDOWN_SECS` 可统一覆盖为 0–86400 秒，0 关闭冷却，适合独立的重试测试。
 

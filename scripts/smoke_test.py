@@ -19,6 +19,13 @@ class Upstream(BaseHTTPRequestHandler):
         data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         seen.append((self.server.provider, data, self.headers.get('Authorization')))
         credential = self.headers.get('Authorization', '')
+        if credential == 'Bearer overloaded':
+            # OpenRouter reports provider failures inside a 200 response.
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream' if data.get('stream') else 'application/json')
+            self.end_headers()
+            self.wfile.write(b'data: {"choices":[],"error":{"code":503,"message":"mock overloaded"}}\n\n' if data.get('stream') else b'{"error":{"code":503,"message":"mock overloaded"}}')
+            return
         failed_codes = {'Bearer invalid':401, 'Bearer forbidden':403, 'Bearer limited':429, 'Bearer broken':500, 'Bearer malformed':400}
         if self.server.provider in ['openrouter', 'commandcode'] and credential in failed_codes:
             self.send_response(failed_codes[credential]); self.end_headers(); self.wfile.write(b'{"error":{"message":"mock failure"}}'); return
@@ -91,13 +98,13 @@ try:
     code, data, headers = request('/v1/chat/completions', body)
     assert code == 200 and json.loads(data)['choices'][0]['message']['content'] == 'hello'
     assert headers['x-gateway-provider'] == 'openrouter'
-    assert seen[-2][1]['model'] == 'space-bunny-free' and seen[-1][1]['model'] == 'stealth/space-bunny-alpha'
+    assert seen[-2][1]['model'] == 'space-bunny-free' and seen[-1][1]['model'] == 'nvidia/nemotron-3-ultra-550b-a55b:free'
     assert seen[-2][2] == 'Bearer mock-zen' and seen[-1][2] == 'Bearer mock-router'
     assert seen[-1][1]['temperature'] == .2
     before = len(seen)
     assert request('/v1/chat/completions', dict(body, model='opencode/space-bunny'))[0] == 429
     assert len(seen) == before + 1
-    code, data, headers = request('/v1/chat/completions', dict(body, model='openrouter/space-bunny', stream=True))
+    code, data, headers = request('/v1/chat/completions', dict(body, model='openrouter/nvidia/nemotron-3-ultra-550b-a55b:free', stream=True))
     assert code == 200 and b'data: [DONE]\n\n' in data and headers['Content-Type'] == 'text/event-stream'
     status = json.loads(request('/api/status')[1])
     assert status['fallbacks'] == 1 and status['requests'] == 3
@@ -113,7 +120,7 @@ try:
     assert json.loads(request('/api/status')[1])['default_provider'] == 'openrouter'
     assert 'replacement' not in request('/api/status')[1].decode()
     # Round robin under concurrent requests, and key-local failure handling.
-    direct = dict(body, model='openrouter/space-bunny')
+    direct = dict(body, model='openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')
     assert request('/api/settings', {'openrouter':['pool-a','pool-b','pool-c','pool-a']})[0] == 200
     assert next(p for p in json.loads(request('/api/status')[1])['providers'] if p['id']=='openrouter')['key_count'] == 3
     before = len(seen)
@@ -155,6 +162,17 @@ try:
     assert request('/v1/chat/completions', body)[0] == 200
     assert [r[0] for r in seen[before:]][:3] == ['opencode','openrouter','commandcode']
     assert 'cmd-good' not in request('/api/status')[1].decode()
+    # A provider failure hidden inside a 200 body must not be relayed before the
+    # remaining keys and providers are exhausted.
+    assert request('/api/settings', {'openrouter':['overloaded'], 'default_provider':'openrouter'})[0] == 200
+    before = len(seen)
+    code, data, headers = request('/v1/chat/completions', body)
+    assert code == 200 and json.loads(data)['choices'][0]['message']['content'] == 'hello'
+    assert headers['x-gateway-provider'] == 'commandcode' and [r[0] for r in seen[before:]][:3] == ['openrouter', 'opencode', 'commandcode']
+    before = len(seen)
+    code, data, headers = request('/v1/chat/completions', dict(body, stream=True))
+    assert code == 200 and b'[DONE]' in data and headers['x-gateway-provider'] == 'commandcode'
+    assert [r[0] for r in seen[before:]][:3] == ['openrouter', 'opencode', 'commandcode']
     assert request('/api/settings', {'commandcode':{'add':['cmd-extra']}})[0] == 200
     assert request('/api/settings', {'commandcode':{'add':[' \u200bBearer cmd-extra\ufeff ']}})[0] == 200
     code, invalid_key_body, _ = request('/api/settings', {'commandcode':{'add':['secret with space']}})

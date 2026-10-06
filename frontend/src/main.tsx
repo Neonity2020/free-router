@@ -205,7 +205,7 @@ function App() {
                   onChange={(e) => setModel(e.target.value)}
                 >
                   <option>space-bunny</option>
-                  <option>openrouter/space-bunny</option>
+                  <option>openrouter/nvidia/nemotron-3-ultra-550b-a55b:free</option>
                   <option>openrouter/apodex/apodex-1.1-mini:free</option>
                   <option>opencode/space-bunny</option>
                   <option>commandcode/space-bunny</option>
