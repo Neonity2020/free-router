@@ -1,0 +1,12 @@
+[package]
+name = "rust-intro"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+description = "跟着敲就能学会的 Rust 入门教程"
+
+[dependencies]
+# 教程全程只用标准库，方便你把注意力放在语言本身。
+
+[profile.release]
+opt-level = 1
