@@ -128,7 +128,7 @@ Smoke 测试使用本地模拟上游，不需要真实密钥，验证模型映�
 
 项目包含 `.github/workflows/release.yml`。将项目放入 GitHub 仓库，更新 `backend/Cargo.toml` 与 `frontend/package.json` 的版本后推送匹配的 `vX.Y.Z` tag。工作流在三个平台构建 Rust 二进制和 React 前端，打包并上传 Release assets。归档包含程序、前端、README 和安装说明，不包含本地配置和 API 密钥。
 
-当前目录尚未关联 GitHub 仓库，需要你填入实际发布仓库后才能检查真实版本。工作流尚未在 GitHub 上运行。
+仓库已关联 `Neonity2020/free-router`（公开）。工作流尚未在 GitHub 上运行：当前没有任何 `vX.Y.Z` tag 或 Release，因此应用内更新检查还没有可发现的真实版本。
 
 参考：[GitHub Releases API](https://docs.github.com/en/rest/releases/releases)。
 
