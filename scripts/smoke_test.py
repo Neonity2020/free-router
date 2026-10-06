@@ -85,7 +85,7 @@ try:
     assert request('/api/updates/settings', {'repository':'','auto_download':False})[0] == 200
     assert json.loads(request('/api/updates')[1])['config']['auto_download'] is False
     assert request('/v1/models', token='wrong')[0] == 401
-    assert len(json.loads(request('/v1/models')[1])['data']) == 4
+    assert len(json.loads(request('/v1/models')[1])['data']) == 5
     assert request('/v1/chat/completions', {'model':'unknown','messages':[{'role':'user','content':'hello'}]})[0] == 400
     body = {'model':'space-bunny','messages':[{'role':'user','content':'hello'}], 'temperature':.2}
     code, data, headers = request('/v1/chat/completions', body)

@@ -57,7 +57,7 @@ with tempfile.TemporaryDirectory() as directory:
             assert chat('none')[0] == 400
             assert not seen, seen
             _, _, data = request('/v1/models')
-            declared = json.loads(data)['data'][2]['reasoning']
+            declared = next(m['reasoning'] for m in json.loads(data)['data'] if m['id'] == 'opencode/space-bunny')
             assert declared['mandatory'] and declared['supported_efforts'] == ['low','medium','high','xhigh','max']
             code, headers, _ = chat()
             assert code == 200 and headers['x-gateway-request-id']
