@@ -367,7 +367,10 @@ mod tests {
         );
         assert_eq!(route("commandcode/"), None);
         assert_eq!(route("commandcode/invalid model"), None);
-        assert_eq!(route("openrouter/apodex/apodex-1.1-mini:free"), Some(Some("openrouter")));
+        assert_eq!(
+            route("openrouter/apodex/apodex-1.1-mini:free"),
+            Some(Some("openrouter"))
+        );
         assert_eq!(route("openrouter/"), None);
         assert_eq!(route("unknown"), None);
     }
