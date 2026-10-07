@@ -13,7 +13,7 @@ const baseUrl = process.env.PI_GATEWAY_URL;
 const defaultCwd = process.env.PI_DEFAULT_CWD || process.cwd();
 delete process.env.PI_BRIDGE_TOKEN;
 if (!token || !baseUrl) throw new Error('Agent must be launched by Free Router');
-const models = ['space-bunny', 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free', 'opencode/space-bunny', 'commandcode/space-bunny'];
+const models = ['space-bunny', 'openrouter/free', 'opencode/space-bunny', 'commandcode/space-bunny'];
 const sessions = new Map();
 const limitText = (value, limit = 24000) => {
   const text = typeof value === 'string' ? value : JSON.stringify(value ?? '', null, 2);

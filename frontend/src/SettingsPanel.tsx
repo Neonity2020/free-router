@@ -3,13 +3,14 @@ import UpdateSettings from "./UpdateSettings";
 import CopyModelId from "./CopyModelId";
 import type { Status } from "./status";
 import type { GatewaySettingsState } from "./useGatewaySettings";
-const PROVIDER_NAMES: Record<string, string> = { openrouter: "OpenRouter", opencode: "OpenCode Zen", commandcode: "Command Code" };
-const PROVIDER_KEY_URLS: Record<string, string> = { openrouter: "https://openrouter.ai/settings/keys", opencode: "https://opencode.ai/auth", commandcode: "https://commandcode.ai/studio" };
+import { DEFAULT_MODEL_ID } from "./piGateway";
+const PROVIDER_NAMES: Record<string, string> = { openrouter: "OpenRouter" };
+const PROVIDER_KEY_URLS: Record<string, string> = { openrouter: "https://openrouter.ai/settings/keys" };
 export default function SettingsPanel({ settings, status, base, managementKey: key, onKeyChange: setKey, offline }: {
   settings: GatewaySettingsState; status: Status | null; base: string;
   managementKey: string; onKeyChange: (key: string) => void; offline: boolean;
 }) {
-  const { draftKeys, setDraftKeys, removedKeys, setRemovedKeys, clearKeys, setClearKeys, preferred, setPreferred, saving, settingsMessage, exaKey, setExaKey, clearExa, setClearExa, gatewayKey, keyBusy, keyMessage, keyVisible, setKeyVisible, loadGatewayKey, copyConnection, saveSettings } = settings;
+  const { draftKeys, setDraftKeys, removedKeys, setRemovedKeys, clearKeys, setClearKeys, saving, settingsMessage, exaKey, setExaKey, clearExa, setClearExa, gatewayKey, keyBusy, keyMessage, keyVisible, setKeyVisible, loadGatewayKey, copyConnection, saveSettings } = settings;
   return (
             <>
               <section className="panel">
@@ -75,8 +76,8 @@ export default function SettingsPanel({ settings, status, base, managementKey: k
                     </button>
                   </div>
                   <p>
-                    模型：<code>space-bunny</code>{" "}
-                    <CopyModelId id="space-bunny" /> ·
+                    模型：<code>{DEFAULT_MODEL_ID}</code>{" "}
+                    <CopyModelId id={DEFAULT_MODEL_ID} /> ·
                     密钥保存在本机，重启后仍可使用。生成后，模型接口启用密钥认证。
                   </p>
                   {keyMessage && <p role="status">{keyMessage}</p>}
@@ -98,7 +99,7 @@ export default function SettingsPanel({ settings, status, base, managementKey: k
                     />
                   </label>
                 )}
-                {(["openrouter", "opencode", "commandcode"] as const).map((id) => {
+                {(["openrouter"] as const).map((id) => {
                   const provider = status?.providers.find((p) => p.id === id);
                   const configured = provider?.configured;
                   const drafts = draftKeys[id] || [""];
@@ -240,18 +241,6 @@ export default function SettingsPanel({ settings, status, base, managementKey: k
                   <label>Exa API Key<input type="password" autoComplete="new-password" value={exaKey} disabled={saving || clearExa} onChange={e => setExaKey(e.target.value)} placeholder="粘贴 API Key；留空保留原密钥" /></label>
                   {status?.exa_configured && <label className="clear-key"><input type="checkbox" disabled={saving} checked={clearExa} onChange={e => setClearExa(e.target.checked)} /> 清除 Exa 密钥</label>}
                 </div>
-                <label>
-                  自动路由优先上游
-                  <select
-                    disabled={saving}
-                    value={preferred || status?.default_provider || "opencode"}
-                    onChange={(e) => setPreferred(e.target.value)}
-                  >
-                    <option value="opencode">OpenCode Zen</option>
-                    <option value="openrouter">OpenRouter</option>
-                    <option value="commandcode">Command Code</option>
-                  </select>
-                </label>
                 <button
                   className="primary"
                   disabled={saving || offline || !status}

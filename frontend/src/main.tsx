@@ -17,7 +17,7 @@ import { useGatewaySettings } from "./useGatewaySettings";
 import ThemeSwitcher from "./ThemeSwitcher";
 import PiAgent from "./PiAgent";
 import MarkdownMessage from "./MarkdownMessage";
-import { PI_SDK_VERSION, gatewayPiSnippet, streamGatewayReply } from "./piGateway";
+import { DEFAULT_MODEL_ID, GATEWAY_MODEL_IDS, PI_SDK_VERSION, gatewayPiSnippet, streamGatewayReply } from "./piGateway";
 import type { Status } from "./status";
 import Overview from "./Overview";
 import CopyModelId from "./CopyModelId";
@@ -26,7 +26,7 @@ function App() {
     [offline, setOffline] = useState(false),
     [tab, setTab] = useState(() => ["overview", "playground", "agent", "setup"].includes(location.hash.slice(1))
       ? location.hash.slice(1) : "overview"),
-    [model, setModel] = useState("space-bunny"),
+    [model, setModel] = useState<string>(DEFAULT_MODEL_ID),
     [prompt, setPrompt] = useState("用三句话介绍你自己。"),
     [key, setKey] = useState(""),
     [result, setResult] = useState(""),
@@ -167,12 +167,12 @@ function App() {
                 {tab === "overview"
                   ? "连接模型，简化调用。"
                   : tab === "playground"
-                    ? "和 Space Bunny 对话。"
+                    ? "和 openrouter/free 对话。"
                     : tab === "agent"
                       ? "让 Pi 完成编程任务。"
                     : "几分钟，完成接入。"}
               </h1>
-              <p>一个本地入口，连接 OpenRouter、OpenCode 与 Command Code。</p>
+              <p>一个本地入口，通过 OpenRouter 调用免费模型。</p>
             </div>
             <button
               className="primary"
@@ -204,11 +204,7 @@ function App() {
                   disabled={running}
                   onChange={(e) => setModel(e.target.value)}
                 >
-                  <option>space-bunny</option>
-                  <option>openrouter/nvidia/nemotron-3-ultra-550b-a55b:free</option>
-                  <option>openrouter/apodex/apodex-1.1-mini:free</option>
-                  <option>opencode/space-bunny</option>
-                  <option>commandcode/space-bunny</option>
+                  {GATEWAY_MODEL_IDS.map(id => <option key={id}>{id}</option>)}
                 </select>
               </label>
               {status?.auth_required && (

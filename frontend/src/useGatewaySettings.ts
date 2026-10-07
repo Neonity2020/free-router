@@ -3,7 +3,6 @@ export function useGatewaySettings(key: string, refresh: () => Promise<void>) {
   const [draftKeys, setDraftKeys] = useState<Record<string, string[]>>({});
   const [removedKeys, setRemovedKeys] = useState<Record<string, string[]>>({});
   const [clearKeys, setClearKeys] = useState<Record<string, boolean>>({});
-  const [preferred, setPreferred] = useState("");
   const [saving, setSaving] = useState(false);
   const [settingsMessage, setSettingsMessage] = useState("");
   const [exaKey, setExaKey] = useState("");
@@ -54,7 +53,7 @@ export function useGatewaySettings(key: string, refresh: () => Promise<void>) {
     setSaving(true);
     setSettingsMessage("");
     const updates: Record<string, unknown> = {};
-    for (const id of ["openrouter", "opencode", "commandcode"]) {
+    for (const id of ["openrouter"]) {
       if (clearKeys[id]) updates[id] = null;
       else {
         const add = (draftKeys[id] || []).map((k) => k.trim()).filter(Boolean);
@@ -62,7 +61,6 @@ export function useGatewaySettings(key: string, refresh: () => Promise<void>) {
         if (add.length || remove.length) updates[id] = { add, remove };
       }
     }
-    if (preferred) updates.default_provider = preferred;
     if (clearExa) updates.exa = null;
     else if (exaKey.trim()) updates.exa = exaKey.trim();
     try {
@@ -80,7 +78,6 @@ export function useGatewaySettings(key: string, refresh: () => Promise<void>) {
       setDraftKeys({});
       setRemovedKeys({});
       setClearKeys({});
-      setPreferred("");
       setExaKey(""); setClearExa(false);
       setSettingsMessage("设置已保存，立即生效。重启后仍然保留。");
       await refresh();
@@ -92,6 +89,6 @@ export function useGatewaySettings(key: string, refresh: () => Promise<void>) {
       setSaving(false);
     }
   }
-  return { draftKeys, setDraftKeys, removedKeys, setRemovedKeys, clearKeys, setClearKeys, preferred, setPreferred, saving, settingsMessage, exaKey, setExaKey, clearExa, setClearExa, gatewayKey, keyBusy, keyMessage, keyVisible, setKeyVisible, loadGatewayKey, copyConnection, saveSettings };
+  return { draftKeys, setDraftKeys, removedKeys, setRemovedKeys, clearKeys, setClearKeys, saving, settingsMessage, exaKey, setExaKey, clearExa, setClearExa, gatewayKey, keyBusy, keyMessage, keyVisible, setKeyVisible, loadGatewayKey, copyConnection, saveSettings };
 }
 export type GatewaySettingsState = ReturnType<typeof useGatewaySettings>;

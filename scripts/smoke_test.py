@@ -92,23 +92,32 @@ try:
     assert request('/api/updates/settings', {'repository':'','auto_download':False})[0] == 200
     assert json.loads(request('/api/updates')[1])['config']['auto_download'] is False
     assert request('/v1/models', token='wrong')[0] == 401
-    assert len(json.loads(request('/v1/models')[1])['data']) == 5
+    catalog = json.loads(request('/v1/models')[1])['data']
+    assert len(catalog) == 5
+    free_router = next(model for model in catalog if model['id'] == 'openrouter/free')
+    assert 'reasoning' not in free_router
     assert request('/v1/chat/completions', {'model':'unknown','messages':[{'role':'user','content':'hello'}]})[0] == 400
     body = {'model':'space-bunny','messages':[{'role':'user','content':'hello'}], 'temperature':.2}
     code, data, headers = request('/v1/chat/completions', body)
     assert code == 200 and json.loads(data)['choices'][0]['message']['content'] == 'hello'
     assert headers['x-gateway-provider'] == 'openrouter'
-    assert seen[-2][1]['model'] == 'space-bunny-free' and seen[-1][1]['model'] == 'nvidia/nemotron-3-ultra-550b-a55b:free'
+    assert seen[-2][1]['model'] == 'space-bunny-free' and seen[-1][1]['model'] == 'openrouter/free'
     assert seen[-2][2] == 'Bearer mock-zen' and seen[-1][2] == 'Bearer mock-router'
     assert seen[-1][1]['temperature'] == .2
     before = len(seen)
     assert request('/v1/chat/completions', dict(body, model='opencode/space-bunny'))[0] == 429
     assert len(seen) == before + 1
-    code, data, headers = request('/v1/chat/completions', dict(body, model='openrouter/nvidia/nemotron-3-ultra-550b-a55b:free', stream=True))
+    code, data, headers = request('/v1/chat/completions', dict(body, model='openrouter/free', stream=True))
+    assert seen[-1][1]['model'] == 'openrouter/free'
     assert code == 200 and b'data: [DONE]\n\n' in data and headers['Content-Type'] == 'text/event-stream'
     status = json.loads(request('/api/status')[1])
     assert status['fallbacks'] == 1 and status['requests'] == 3
     assert 'mock-zen' not in str(status)
+    # Explicit upstream namespace also keeps the complete router model ID.
+    assert request('/v1/chat/completions', dict(body, model='openrouter/openrouter/free'))[0] == 200
+    assert seen[-1][1]['model'] == 'openrouter/free'
+    assert request('/v1/chat/completions', dict(body, model='openrouter/apodex/apodex-1.1-mini:free'))[0] == 200
+    assert seen[-1][1]['model'] == 'apodex/apodex-1.1-mini:free'
     assert request('/api/settings', {'openrouter':'replacement'}, token='wrong')[0] == 401
     assert request('/api/settings', {'openrouter':'replacement'}, settings_header=False)[0] == 403
     assert request('/api/settings', {'openrouter':''})[0] == 400
@@ -120,7 +129,7 @@ try:
     assert json.loads(request('/api/status')[1])['default_provider'] == 'openrouter'
     assert 'replacement' not in request('/api/status')[1].decode()
     # Round robin under concurrent requests, and key-local failure handling.
-    direct = dict(body, model='openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')
+    direct = dict(body, model='openrouter/free')
     assert request('/api/settings', {'openrouter':['pool-a','pool-b','pool-c','pool-a']})[0] == 200
     assert next(p for p in json.loads(request('/api/status')[1])['providers'] if p['id']=='openrouter')['key_count'] == 3
     before = len(seen)

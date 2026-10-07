@@ -2,12 +2,10 @@ import { createModels, createProvider, type Model } from "@earendil-works/pi-ai"
 import { openAICompletionsApi } from "@earendil-works/pi-ai/api/openai-completions.lazy";
 
 export const PI_SDK_VERSION = "0.99.2";
+export const DEFAULT_MODEL_ID = "openrouter/free";
 export const GATEWAY_MODEL_IDS = [
-  "space-bunny",
-  "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+  DEFAULT_MODEL_ID,
   "openrouter/apodex/apodex-1.1-mini:free",
-  "opencode/space-bunny",
-  "commandcode/space-bunny",
 ] as const;
 
 export function gatewayPiSnippet(baseUrl: string, modelId: string) {

@@ -291,19 +291,9 @@ p {
   padding-top: 32px;
   position: relative;
 }
-.branches:before {
-  content: "";
-  position: absolute;
-  top: 15px;
-  left: 62px;
-  right: 62px;
-  height: 18px;
-  border: 1px dashed #a7ba98;
-  border-bottom: 0;
-}
 .branches:after {
   content: "";
-  height: 15px;
+  height: 32px;
   border-left: 1px dashed #a7ba98;
   position: absolute;
   top: 0;

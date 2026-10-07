@@ -21,7 +21,7 @@ test('Pi SDK streams through the real Rust gateway', async (t) => {
     for await (const chunk of req) body += chunk;
     const data = JSON.parse(body);
     seen.push({ data, key: req.headers.authorization });
-    if (data.model === 'space-bunny-free') {
+    if (data.messages[0].content === 'rate-limit') {
       res.writeHead(429, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: { message: 'mock rate limit' } }));
       return;
@@ -76,7 +76,7 @@ test('Pi SDK streams through the real Rust gateway', async (t) => {
   assert.ok(ready, 'gateway must start');
   const probe = await fetch(`${baseUrl}/chat/completions`, {
     method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: 'Bearer mock-gateway' },
-    body: JSON.stringify({ model: 'commandcode/space-bunny', messages: [{ role: 'user', content: 'hi' }], stream: true,
+    body: JSON.stringify({ model: 'openrouter/free', messages: [{ role: 'user', content: 'hi' }], stream: true,
       max_completion_tokens: 1, thinking: { type: 'disabled' }, enable_thinking: false,
       reasoning_effort: 'none', reasoning: { effort: 'none' } }),
   });
@@ -88,7 +88,7 @@ test('Pi SDK streams through the real Rust gateway', async (t) => {
   }
   seen.length = 0;
   const call = (overrides = {}) => streamGatewayReply({
-    baseUrl, modelId: 'space-bunny', apiKey: 'mock-gateway', prompt: 'hello',
+    baseUrl, modelId: 'openrouter/free', apiKey: 'mock-gateway', prompt: 'hello',
     signal: new AbortController().signal, onText() {}, onThinking() {}, ...overrides,
   });
   const deltas = [];
@@ -98,22 +98,24 @@ test('Pi SDK streams through the real Rust gateway', async (t) => {
   assert.equal(deltas.at(-1), '你好，世界');
   assert.equal(message.usage.totalTokens, 9);
   assert.equal(thinking.at(-1), '思考示例');
-  assert.deepEqual(seen.map(r => r.data.model), ['space-bunny-free', 'nvidia/nemotron-3-ultra-550b-a55b:free']);
-  assert.deepEqual(seen.map(r => r.key), ['Bearer mock-zen', 'Bearer mock-router']);
+  // Even if a hidden provider is configured and preferred, frontend calls
+  // explicitly target OpenRouter rather than the legacy automatic alias.
+  assert.deepEqual(seen.map(r => r.data.model), ['openrouter/free']);
+  assert.deepEqual(seen.map(r => r.key), ['Bearer mock-router']);
   assert.ok(seen.every(r => r.data.stream === true && r.data.max_tokens === 4096));
-  await call({ modelId: 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free' });
-  await call({ modelId: 'commandcode/space-bunny' });
-  assert.equal(seen.at(-1).key, 'Bearer mock-command');
-  assert.equal(seen.at(-1).data.model, 'stealth/space-bunny-alpha');
-  assert.equal((await call({ modelId: 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free', prompt: 'length' })).stopReason, 'length');
-  await assert.rejects(call({ modelId: 'opencode/space-bunny' }), /mock rate limit/);
+  await call({ modelId: 'openrouter/free' });
+  await call({ modelId: 'openrouter/apodex/apodex-1.1-mini:free' });
+  assert.equal(seen.at(-1).key, 'Bearer mock-router');
+  assert.equal(seen.at(-1).data.model, 'apodex/apodex-1.1-mini:free');
+  assert.equal((await call({ modelId: 'openrouter/free', prompt: 'length' })).stopReason, 'length');
+  await assert.rejects(call({ prompt: 'rate-limit' }), /mock rate limit/);
   await assert.rejects(call({ apiKey: 'wrong-key' }), /401|[Uu]nauthorized|[Ii]nvalid/);
   await assert.rejects(call({ modelId: 'unknown' }), /未知/);
   const controller = new AbortController();
-  const cancelled = await call({ modelId: 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free', prompt: 'cancel',
+  const cancelled = await call({ modelId: 'openrouter/free', prompt: 'cancel',
     signal: controller.signal, onText: () => controller.abort() });
   assert.equal(cancelled.stopReason, 'aborted');
-  const example = spawn(process.execPath, ['--input-type=module', '-e', gatewayPiSnippet(baseUrl, 'openrouter/nvidia/nemotron-3-ultra-550b-a55b:free')], {
+  const example = spawn(process.execPath, ['--input-type=module', '-e', gatewayPiSnippet(baseUrl, 'openrouter/free')], {
     cwd: resolve(root, 'frontend'), env: { ...process.env, GATEWAY_KEY_COOLDOWN_SECS: '0', GATEWAY_API_KEY: 'mock-gateway' },
   });
   let output = '', errors = '';

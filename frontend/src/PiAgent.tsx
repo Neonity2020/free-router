@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Bot, FolderOpen, Plus, Send, Square, Terminal, Trash2 } from "lucide-react";
-import { GATEWAY_MODEL_IDS, PI_SDK_VERSION } from "./piGateway";
+import { DEFAULT_MODEL_ID, PI_SDK_VERSION } from "./piGateway";
 import MarkdownMessage from "./MarkdownMessage";
 import ToolActivity from "./ToolActivity";
 import { buildTimeline, type Item } from "./agentTimeline";
@@ -11,7 +11,7 @@ export default function PiAgent({ managementRequired, gatewayKey, onKeyChange }:
   managementRequired: boolean; gatewayKey: string; onKeyChange: (key: string) => void;
 }) {
   const [cwd, setCwd] = useState("");
-  const [model, setModel] = useState<string>("space-bunny");
+  const [model, setModel] = useState<string>(DEFAULT_MODEL_ID);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeId, setActiveId] = useState("");
   const [session, setSession] = useState<Session | null>(null);
@@ -150,7 +150,7 @@ export default function PiAgent({ managementRequired, gatewayKey, onKeyChange }:
         </label>
         <label>模型路由
           <select value={model} onChange={e => setModel(e.target.value)}>
-            {GATEWAY_MODEL_IDS.map(id => <option key={id}>{id}</option>)}
+            <option>{DEFAULT_MODEL_ID}</option>
           </select>
         </label>
         <p className="agent-permissions">工具以本机用户权限读写文件、执行命令。工作目录不是沙箱；新建会话后即可执行编程任务。</p>

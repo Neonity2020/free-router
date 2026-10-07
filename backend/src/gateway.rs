@@ -9,7 +9,7 @@ pub(crate) async fn models(State(app): State<Shared>, headers: HeaderMap) -> Res
     }
     let data: Vec<_> = [
         "space-bunny",
-        "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+        "openrouter/free",
         "openrouter/apodex/apodex-1.1-mini:free",
         "opencode/space-bunny",
         "commandcode/space-bunny",
@@ -17,15 +17,9 @@ pub(crate) async fn models(State(app): State<Shared>, headers: HeaderMap) -> Res
     .into_iter()
     .map(|id| {
         let mut model = json!({"id":id,"object":"model","created":0,"owned_by":"free-router"});
-        if id == "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free" {
-            // Mirrors the upstream declaration instead of Space Bunny's five
-            // mandatory levels: reasoning is optional, high and medium only.
-            model["reasoning"] = json!({
-                "mandatory":false,
-                "supported_efforts":["high","medium"],
-                "default_effort":"high"
-            });
-        } else if id == "opencode/space-bunny" {
+        // Free Models Router chooses the actual model dynamically, so its
+        // reasoning capabilities cannot be described as fixed effort levels.
+        if id == "opencode/space-bunny" {
             model["reasoning"] =
                 json!({"mandatory":true,"supported_efforts":["low","medium","high","xhigh","max"]});
         }
@@ -37,8 +31,7 @@ pub(crate) async fn models(State(app): State<Shared>, headers: HeaderMap) -> Res
 pub(crate) fn route(model: &str) -> Option<Option<&'static str>> {
     match model {
         "space-bunny" => Some(None),
-        "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
-        | "openrouter/apodex/apodex-1.1-mini:free" => Some(Some("openrouter")),
+        "openrouter/free" | "openrouter/apodex/apodex-1.1-mini:free" => Some(Some("openrouter")),
         "opencode/space-bunny" | "space-bunny-free" => Some(Some("opencode")),
         id if id.strip_prefix("openrouter/").is_some_and(|model| {
             !model.is_empty()
@@ -177,9 +170,13 @@ async fn chat_with_deadline(
                     .strip_prefix("commandcode/")
                     .unwrap_or(p.model)
             } else if p.id == "openrouter" {
-                requested_model
-                    .strip_prefix("openrouter/")
-                    .unwrap_or(p.model)
+                if requested_model == "openrouter/free" {
+                    requested_model.as_str()
+                } else {
+                    requested_model
+                        .strip_prefix("openrouter/")
+                        .unwrap_or(p.model)
+                }
             } else {
                 p.model
             });

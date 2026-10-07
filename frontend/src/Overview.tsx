@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ArrowUpRight, Check, Copy, Network, Terminal, Zap } from "lucide-react";
 import CopyModelId from "./CopyModelId";
 import type { Status } from "./status";
+import { DEFAULT_MODEL_ID } from "./piGateway";
 export default function Overview({ status, base, onSelectModel }: { status: Status | null; base: string; onSelectModel: (id: string) => void }) {
   const [copied, setCopied] = useState(false);
   return (
@@ -45,16 +46,12 @@ export default function Overview({ status, base, onSelectModel }: { status: Stat
                   <div className="node gateway">
                     <Network size={23} />
                     <strong>Free Router</strong>
-                    <small>智能路由 · 故障切换</small>
+                    <small>免费模型 · 密钥轮询</small>
                   </div>
                   <div className="branches">
                     <div className="node upstream">
                       OpenRouter <span>↗</span>
                     </div>
-                    <div className="node upstream">
-                      OpenCode <span>↗</span>
-                    </div>
-                    <div className="node upstream">Command Code <span>↗</span></div>
                   </div>
                 </div>
               </section>
@@ -63,9 +60,9 @@ export default function Overview({ status, base, onSelectModel }: { status: Stat
                   <span>已配置上游</span>
                   <strong>
                     {status
-                      ? status.providers.filter((p) => p.configured).length
+                      ? status.providers.filter((p) => p.id === "openrouter" && p.configured).length
                       : "—"}
-                    <small>/ {status?.providers.length || 3}</small>
+                    <small>/ 1</small>
                   </strong>
                   <p>API 密钥已配置</p>
                 </article>
@@ -75,9 +72,9 @@ export default function Overview({ status, base, onSelectModel }: { status: Stat
                   <p>本次运行累计</p>
                 </article>
                 <article>
-                  <span>自动切换</span>
-                  <strong>{status?.fallbacks ?? "—"}</strong>
-                  <p>失败后尝试备用上游</p>
+                  <span>可用模型路由</span>
+                  <strong>2</strong>
+                  <p>OpenRouter 免费模型</p>
                 </article>
                 <article>
                   <span>接口协议</span>
@@ -89,22 +86,15 @@ export default function Overview({ status, base, onSelectModel }: { status: Stat
               </div>
               <div className="section-title">
                 <h3>模型路由</h3>
-                <span>01 AUTOMATIC · 04 DIRECT</span>
+                <span>02 OPENROUTER ROUTES</span>
               </div>
               <div className="routes">
                 {[
                   [
-                    "space-bunny",
-                    "自动路由",
-                    "按优先顺序选择已配置上游，连接失败、429 或 5xx 时切换。",
-                  ],
-                  [
-                    "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+                    DEFAULT_MODEL_ID,
                     "OpenRouter",
-                    "nvidia/nemotron-3-ultra-550b-a55b:free",
+                    "根据请求能力自动选择可用的免费模型。",
                   ],
-                  ["opencode/space-bunny", "OpenCode Zen", "space-bunny-free"],
-                  ["commandcode/space-bunny", "Command Code", "stealth/space-bunny-alpha"],
                   ["openrouter/apodex/apodex-1.1-mini:free", "OpenRouter", "apodex/apodex-1.1-mini:free"],
                 ].map(([id, name, desc], i) => (
                   <div className="route-row" key={id}>

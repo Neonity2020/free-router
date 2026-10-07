@@ -202,7 +202,7 @@ async fn main() {
             keys: parse_keys(&json!(var("OPENROUTER_API_KEY", "")))
                 .expect("Invalid OPENROUTER_API_KEY"),
             cursor: Arc::new(AtomicU64::new(0)),
-            model: "nvidia/nemotron-3-ultra-550b-a55b:free",
+            model: "openrouter/free",
         },
         Provider {
             id: "commandcode",
@@ -358,10 +358,7 @@ mod tests {
     #[test]
     fn model_routes() {
         assert_eq!(route("space-bunny"), Some(None));
-        assert_eq!(
-            route("openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"),
-            Some(Some("openrouter"))
-        );
+        assert_eq!(route("openrouter/free"), Some(Some("openrouter")));
         assert_eq!(route("space-bunny-free"), Some(Some("opencode")));
         assert_eq!(route("commandcode/space-bunny"), Some(Some("commandcode")));
         assert_eq!(
