@@ -25,11 +25,16 @@ class Upstream(BaseHTTPRequestHandler):
             self.end_headers()
             return
         self.send_response(200)
-        self.send_header('Content-Type', 'text/event-stream' if scenario == 'stream' else 'application/json')
-        self.send_header('Content-Length', '1000' if scenario == 'stream' else '2')
+        streaming = scenario in ('stream', 'first-event-timeout')
+        self.send_header('Content-Type', 'text/event-stream' if streaming else 'application/json')
+        self.send_header('Content-Length', '1000' if streaming else '2')
         self.end_headers()
         try:
-            self.wfile.write(b'data: hello\n\n' if scenario == 'stream' else b'{}')
+            if scenario == 'first-event-timeout':
+                self.wfile.write(b': keep-alive\r\n\r\n')
+                self.wfile.flush()
+                time.sleep(.6)
+            self.wfile.write(b'data: hello\n\n' if streaming else b'{}')
             self.wfile.flush()
             if scenario == 'stream':
                 time.sleep(.6)
@@ -80,7 +85,7 @@ with tempfile.TemporaryDirectory() as directory:
             raise AssertionError('gateway did not start')
 
         def chat(scenario):
-            return request('/v1/chat/completions', {'model': 'space-bunny', 'messages': [{'role': 'user', 'content': scenario}], 'stream': scenario == 'stream'})
+            return request('/v1/chat/completions', {'model': 'space-bunny', 'messages': [{'role': 'user', 'content': scenario}], 'stream': scenario in ('stream', 'first-event-timeout')})
 
         started = time.monotonic()
         conn, res = chat('exhaust')
@@ -113,7 +118,14 @@ with tempfile.TemporaryDirectory() as directory:
             conn.close()
         assert .8 < time.monotonic() - started < 1.8
         assert [entry[1] for entry in seen if entry[0] == 'stream'] == ['opencode', 'openrouter']
-        print('PASS: shared retry deadline returns 504, fallback succeeds within budget, SSE uses remaining budget without retry')
+        started = time.monotonic()
+        conn, res = chat('first-event-timeout')
+        assert res.status == 504, res.status
+        assert json.loads(res.read())['error']['code'] == 504
+        conn.close()
+        assert .8 < time.monotonic() - started < 1.8
+        assert [entry[1] for entry in seen if entry[0] == 'first-event-timeout'] == ['opencode', 'openrouter']
+        print('PASS: shared retry deadline returns 504, fallback succeeds within budget, SSE uses remaining budget without retry, first-event timeout returns 504')
     finally:
         proc.terminate()
         try:

@@ -19,6 +19,22 @@ class Upstream(BaseHTTPRequestHandler):
         data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         seen.append((self.server.provider, data, self.headers.get('Authorization')))
         credential = self.headers.get('Authorization', '')
+        if data.get('stream') and credential in ['Bearer overloaded-crlf', 'Bearer interrupted', 'Bearer empty-stream', 'Bearer partial-stream', 'Bearer done-only']:
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/event-stream')
+            if credential in ['Bearer interrupted', 'Bearer partial-stream']:
+                # Deliberately close before the declared body has been sent.
+                self.send_header('Content-Length', '1000')
+            self.end_headers()
+            payloads = {
+                'Bearer overloaded-crlf': b': keep-alive\r\n\r\ndata: {"error":{"code":503}}\r\n\r\n',
+                'Bearer interrupted': b': keep-alive\n\n',
+                'Bearer empty-stream': b'',
+                'Bearer partial-stream': b'data: {"choices":[',
+                'Bearer done-only': b'data: [DONE]\r\n\r\n',
+            }
+            self.wfile.write(payloads[credential])
+            return
         if credential == 'Bearer overloaded':
             # OpenRouter reports provider failures inside a 200 response.
             self.send_response(200)
@@ -182,6 +198,28 @@ try:
     code, data, headers = request('/v1/chat/completions', dict(body, stream=True))
     assert code == 200 and b'[DONE]' in data and headers['x-gateway-provider'] == 'commandcode'
     assert [r[0] for r in seen[before:]][:3] == ['openrouter', 'opencode', 'commandcode']
+    # No failed prefix may reach the client before the first usable SSE event.
+    for failing in ['overloaded-crlf', 'interrupted', 'empty-stream', 'partial-stream']:
+        assert request('/api/settings', {'openrouter':[failing, 'good']})[0] == 200
+        before = len(seen)
+        code, data, headers = request('/v1/chat/completions', dict(direct, stream=True))
+        assert code == 200 and data == b'data: {"choices":[{"delta":{"content":"hello"}}]}\n\ndata: [DONE]\n\n', (failing, code, data)
+        assert headers['x-gateway-provider'] == 'openrouter'
+        assert [r[2] for r in seen[before:]] == ['Bearer '+failing, 'Bearer good']
+    for failing in ['interrupted', 'empty-stream', 'partial-stream']:
+        assert request('/api/settings', {'openrouter':[failing]})[0] == 200
+        code, data, _ = request('/v1/chat/completions', dict(direct, stream=True))
+        assert code == 502 and json.loads(data)['error']['code'] == 502, (failing, code, data)
+    assert request('/api/settings', {'openrouter':['interrupted']})[0] == 200
+    before = len(seen)
+    code, data, headers = request('/v1/chat/completions', dict(body, stream=True))
+    assert code == 200 and b'[DONE]' in data and headers['x-gateway-provider'] == 'commandcode'
+    assert seen[before][0] == 'openrouter' and seen[-1][0] == 'commandcode'
+    assert request('/api/settings', {'openrouter':['done-only', 'good']})[0] == 200
+    before = len(seen)
+    code, data, _ = request('/v1/chat/completions', dict(direct, stream=True))
+    assert code == 200 and data == b'data: [DONE]\r\n\r\n'
+    assert len(seen) == before + 1
     assert request('/api/settings', {'commandcode':{'add':['cmd-extra']}})[0] == 200
     assert request('/api/settings', {'commandcode':{'add':[' \u200bBearer cmd-extra\ufeff ']}})[0] == 200
     code, invalid_key_body, _ = request('/api/settings', {'commandcode':{'add':['secret with space']}})

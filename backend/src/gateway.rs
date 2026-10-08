@@ -266,22 +266,37 @@ async fn chat_with_deadline(
                         let peek = async {
                             while buffered.len() <= INSPECT_LIMIT {
                                 let Some(chunk) = stream.next().await else {
-                                    break;
+                                    return Err(StatusCode::BAD_GATEWAY);
                                 };
-                                let Ok(bytes) = chunk else { break };
+                                let bytes = chunk.map_err(|error| {
+                                    if error.is_timeout() {
+                                        StatusCode::GATEWAY_TIMEOUT
+                                    } else {
+                                        StatusCode::BAD_GATEWAY
+                                    }
+                                })?;
                                 buffered.extend_from_slice(&bytes);
                                 if let Some(data) = first_sse_data(&buffered) {
-                                    return serde_json::from_str::<Value>(data)
-                                        .is_ok_and(|value| embedded_failure(&value));
+                                    return Ok(serde_json::from_str::<Value>(data)
+                                        .is_ok_and(|value| embedded_failure(&value)));
                                 }
                             }
-                            false
+                            Ok(false)
                         };
-                        // The peek shares the request budget, so an upstream
-                        // that never delivers an event still gets relayed.
-                        let failed = tokio::time::timeout_at(deadline, peek)
-                            .await
-                            .unwrap_or(false);
+                        // The outer request deadline also covers this peek.
+                        // Before the first event, a broken stream can still be retried.
+                        let failed = match peek.await {
+                            Ok(failed) => failed,
+                            Err(status) => {
+                                key.cool_down(5);
+                                last =
+                                    error(status, "Unable to read the first upstream stream event");
+                                if more {
+                                    continue;
+                                }
+                                return last;
+                            }
+                        };
                         if failed && more {
                             key.cool_down(5);
                             last = error(
@@ -377,15 +392,25 @@ fn embedded_failure_of(bytes: &[u8]) -> bool {
 /// Payload of the first complete SSE event that carries data, skipping
 /// keep-alive comments and an event that is still incomplete.
 fn first_sse_data(buffered: &[u8]) -> Option<&str> {
-    let mut rest = std::str::from_utf8(buffered).ok()?;
-    while let Some((event, tail)) = rest.split_once("\n\n") {
-        if let Some(data) = event.split('\n').find_map(|line| {
-            let data = line.strip_prefix("data:")?.trim();
-            (!data.is_empty() && data != "[DONE]").then_some(data)
-        }) {
-            return Some(data);
+    let mut data = None;
+    // Scan complete lines as bytes so a partial UTF-8 character in a later
+    // event cannot prevent inspecting an already complete event.
+    for line in buffered.split_inclusive(|byte| *byte == b'\n') {
+        let line = line.strip_suffix(b"\n")?;
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.is_empty() {
+            if data.is_some() {
+                return data;
+            }
+        } else if data.is_none() {
+            if let Some(payload) = line.strip_prefix(b"data:") {
+                let payload = std::str::from_utf8(payload).ok()?.trim();
+                if !payload.is_empty() {
+                    // [DONE] is a valid terminal event, including an empty reply.
+                    data = Some(payload);
+                }
+            }
         }
-        rest = tail;
     }
     None
 }
@@ -435,7 +460,7 @@ mod tests {
     #[test]
     fn first_event_skips_comments_and_partial_frames() {
         assert_eq!(first_sse_data(b": keep-alive\n\n"), None);
-        assert_eq!(first_sse_data(b"data: [DONE]\n\n"), None);
+        assert_eq!(first_sse_data(b"data: [DONE]\n\n"), Some("[DONE]"));
         assert_eq!(first_sse_data(b"data: {\"choices\":[\""), None);
         assert_eq!(
             first_sse_data(b": OPENROUTER PROCESSING\n\ndata: hello\n\n"),
@@ -451,5 +476,30 @@ mod tests {
         let healthy = first_sse_data(b"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n")
             .and_then(|data| serde_json::from_str::<Value>(data).ok());
         assert!(healthy.is_some_and(|value| !embedded_failure(&value)));
+    }
+    #[test]
+    fn first_event_accepts_crlf_and_split_delimiters() {
+        for ending in ["\n", "\r\n"] {
+            let event = format!(
+                ": keep-alive{ending}{ending}data: {{\"error\":{{\"code\":503}}}}{ending}{ending}"
+            );
+            for end in 0..event.len() {
+                assert_eq!(first_sse_data(&event.as_bytes()[..end]), None);
+            }
+            assert!(first_sse_data(event.as_bytes())
+                .is_some_and(|data| embedded_failure_of(data.as_bytes())));
+        }
+        assert_eq!(
+            first_sse_data(b": comment\r\n\r\ndata: hello\n\n"),
+            Some("hello")
+        );
+        assert_eq!(first_sse_data(b"data: [DONE]\r\n\r\n"), Some("[DONE]"));
+    }
+    #[test]
+    fn complete_event_is_inspected_before_a_partial_utf8_tail() {
+        assert_eq!(
+            first_sse_data(b"data: {\"error\":{\"code\":503}}\r\n\r\ndata: \xe4\xbd"),
+            Some("{\"error\":{\"code\":503}}")
+        );
     }
 }
